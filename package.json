@@ -1,0 +1,21 @@
+{
+  "name": "duckai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:inject": "bun scripts/build-inject.ts",
+    "build:inject:min": "bun scripts/build-inject.ts --minify",
+    "dev": "bun run build:inject && bun src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run build:inject:min && bun build --compile --minify src/main.ts src/worker.ts --outfile dist/duckai"
+  },
+  "dependencies": {
+    "webview-bun": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}
