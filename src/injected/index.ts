@@ -190,6 +190,21 @@ if (!window.__duckai_ext) {
       callHarness("setToolEnabled", { name, enabled }) as Promise<ManagedTool[]>,
     setPermission: (name, level) =>
       callHarness("setPermission", { name, level }) as Promise<ManagedTool[]>,
+    loadMcp: () => callHarness("mcpServers") as Promise<
+      Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
+    >,
+    upsertMcp: (server) =>
+      callHarness("mcpUpsert", server) as Promise<
+        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
+      >,
+    deleteMcp: (name) =>
+      callHarness("mcpDelete", { name }) as Promise<
+        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
+      >,
+    setMcpEnabled: (name, enabled) =>
+      callHarness("mcpSetEnabled", { name, enabled }) as Promise<
+        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
+      >,
     onChange: (tools) => {
       ext.tools = tools.filter((t) => t.enabled);
     },

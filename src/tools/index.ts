@@ -1,6 +1,7 @@
 import type { Tool } from "../harness";
 import { execTools } from "./exec";
 import { fsTools } from "./fs";
+import { mcpTools } from "./mcp";
 import { memoryTools } from "./memory";
 import { searchTools } from "./search";
 import { systemTools } from "./system";
@@ -13,6 +14,7 @@ export const coreTools: Tool[] = [
   ...systemTools,
   ...todoTools,
   ...memoryTools,
+  ...mcpTools,
 ];
 
-export { execTools, fsTools, memoryTools, searchTools, systemTools, todoTools };
+export { execTools, fsTools, mcpTools, memoryTools, searchTools, systemTools, todoTools };

@@ -138,6 +138,84 @@ registerToolView("memory_forget", {
   },
 });
 
+// --- MCP gateway tools (discovery proxies; MCP schemas stay on demand) ---
+
+registerToolView("mcp_servers", {
+  summary: (c) => {
+    const servers = parse<{ servers?: string[] }>(c.result)?.servers;
+    return servers ? `${servers.length} server${servers.length === 1 ? "" : "s"}` : "mcp servers";
+  },
+  body: (c) => {
+    const servers = parse<{ servers?: string[] }>(c.result)?.servers;
+    if (!servers) return [];
+    return servers.length
+      ? [{ kind: "list", items: servers }]
+      : [{ kind: "text", text: "No MCP servers configured." }];
+  },
+});
+
+registerToolView("mcp_tools", {
+  summary: (c) => {
+    const a = c.args as { server?: string } | undefined;
+    const tools = parse<{ tools?: unknown[] }>(c.result)?.tools;
+    return tools ? `${a?.server ?? "mcp"}: ${tools.length} tool${tools.length === 1 ? "" : "s"}` : `tools ${a?.server ?? ""}`;
+  },
+  body: (c) => {
+    const tools = parse<{
+      tools?: Array<{
+        name?: string;
+        desc?: string;
+        description?: string;
+        required?: string[];
+        props?: Record<string, string>;
+        inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
+      }>;
+    }>(c.result)?.tools;
+    if (!tools) return [];
+    const items = tools.map((t) => {
+      const parts: string[] = [String(t.name ?? "tool")];
+      const desc = t.desc ?? t.description;
+      if (desc) parts.push(desc);
+      const required = t.required ?? t.inputSchema?.required;
+      if (required?.length) parts.push(`required: ${required.join(", ")}`);
+      const props = t.props ??
+        (t.inputSchema?.properties
+          ? Object.fromEntries(
+              Object.entries(t.inputSchema.properties).map(([k, v]) => [
+                k,
+                typeof (v as { type?: unknown })?.type === "string"
+                  ? String((v as { type: string }).type)
+                  : "any",
+              ]),
+            )
+          : undefined);
+      if (props && Object.keys(props).length) {
+        parts.push(`props: ${Object.entries(props).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+      }
+      return parts.join(" · ");
+    });
+    return items.length ? [{ kind: "list", items }] : [{ kind: "text", text: "No tools." }];
+  },
+});
+
+registerToolView("mcp_call", {
+  summary: (c) => {
+    const a = c.args as { server?: string; tool?: string } | undefined;
+    return `${a?.server ?? "mcp"} ${a?.tool ?? "tool"}`;
+  },
+  body: (c) => {
+    const r = parse<Record<string, unknown>>(c.result);
+    if (!r) return [];
+    if (typeof r.text === "string") return [{ kind: "text", text: r.text }];
+    if (typeof r.error === "string") return [{ kind: "text", text: r.error }];
+    const fields = Object.entries(r).map(([k, v]) => ({
+      label: k,
+      value: typeof v === "string" ? v : JSON.stringify(v),
+    }));
+    return fields.length ? [{ kind: "fields", fields }] : [];
+  },
+});
+
 // --- misc -------------------------------------------------------------------
 
 registerToolView("get_current_time", {

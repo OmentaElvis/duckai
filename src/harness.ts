@@ -13,6 +13,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { summarizeHealth, type HealthReport } from "./health-report";
+import {
+  deleteMcpServer,
+  listMcpServersForUi,
+  setMcpServerEnabled,
+  upsertMcpServer,
+} from "./mcp/client";
 import type { ManagedTool, Permission, PermissionSource, ToolInfo, ToolManifestEntry } from "./protocol";
 import { coreTools } from "./tools";
 
@@ -261,6 +267,45 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         if (!p?.name) return { ok: false, error: "missing tool name" };
         if (!isPermission(p.level)) return { ok: false, error: "invalid permission" };
         return { ok: true, result: setToolPermission(p.name, p.level) };
+      }
+      case "mcpServers":
+        return { ok: true, result: listMcpServersForUi() };
+      case "mcpUpsert": {
+        const p = params as {
+          name?: string;
+          command?: string;
+          args?: string[];
+          env?: Record<string, string>;
+          enabled?: boolean;
+        };
+        if (!p?.name?.trim() || !p?.command?.trim()) return { ok: false, error: "name and command required" };
+        try {
+          upsertMcpServer({
+            name: p.name,
+            command: p.command,
+            args: p.args,
+            env: p.env,
+            enabled: p.enabled,
+          });
+          return { ok: true, result: listMcpServersForUi() };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      }
+      case "mcpDelete": {
+        const p = params as { name?: string };
+        if (!p?.name) return { ok: false, error: "missing name" };
+        return { ok: true, result: deleteMcpServer(p.name) ? listMcpServersForUi() : [] };
+      }
+      case "mcpSetEnabled": {
+        const p = params as { name?: string; enabled?: boolean };
+        if (!p?.name) return { ok: false, error: "missing name" };
+        try {
+          setMcpServerEnabled(p.name, p.enabled !== false);
+          return { ok: true, result: listMcpServersForUi() };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
       }
       case "call": {
         const p = params as { name?: string; args?: Record<string, unknown> };
