@@ -83,6 +83,61 @@ registerToolView("todo_remove", {
   body: todoBlocks,
 });
 
+// --- Memory tools (token-lean: bare key lists / maps, no metadata dumps) ---
+
+registerToolView("memory_list", {
+  summary: (c) => {
+    const keys = parse<{ keys?: string[] }>(c.result)?.keys;
+    return keys ? `${keys.length} key${keys.length === 1 ? "" : "s"}` : "list memory";
+  },
+  body: (c) => {
+    const keys = parse<{ keys?: string[] }>(c.result)?.keys;
+    if (!keys) return [];
+    return keys.length
+      ? [{ kind: "list", items: keys }]
+      : [{ kind: "text", text: "No memories." }];
+  },
+});
+
+registerToolView("memory_get", {
+  summary: (c) => {
+    const keys = (c.args as { keys?: string[] } | undefined)?.keys;
+    return keys ? `get ${keys.join(", ")}` : "get memory";
+  },
+  body: (c) => {
+    const m = parse<Record<string, string>>(c.result);
+    if (!m) return [];
+    const fields = Object.entries(m).map(([k, v]) => ({ label: k, value: v }));
+    return fields.length ? [{ kind: "fields", fields }] : [{ kind: "text", text: "No matches." }];
+  },
+});
+
+registerToolView("memory_set", {
+  summary: (c) => {
+    const a = c.args as { key?: string } | undefined;
+    return `set ${a?.key ?? "memory"}`;
+  },
+  body: (c) => {
+    const a = c.args as { key?: string; value?: string } | undefined;
+    if (!a?.key) return [];
+    return [
+      {
+        kind: "fields",
+        fields: [
+          { label: a.key, value: a.value ?? "" },
+        ],
+      },
+    ];
+  },
+});
+
+registerToolView("memory_forget", {
+  summary: (c) => {
+    const a = c.args as { key?: string } | undefined;
+    return `forget ${a?.key ?? "memory"}`;
+  },
+});
+
 // --- misc -------------------------------------------------------------------
 
 registerToolView("get_current_time", {

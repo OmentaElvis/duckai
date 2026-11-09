@@ -258,3 +258,103 @@ describe("system tools", () => {
     }
   });
 });
+
+describe("memory tools", () => {
+  const memPath = () => join(testDir, "memory.json");
+  const prev = process.env.DUCKAI_MEMORY_PATH;
+  test("set/get/list/forget roundtrip is token-lean", async () => {
+    process.env.DUCKAI_MEMORY_PATH = memPath();
+    try {
+      const set = (await executeTool("memory_set", {
+        key: "User.Timezone",
+        value: "Europe/London",
+      })) as { k?: string; error?: string };
+      expect(set).toEqual({ k: "user.timezone" });
+
+      const get = (await executeTool("memory_get", { keys: ["user.timezone", "missing"] })) as Record<string, string>;
+      expect(get).toEqual({ "user.timezone": "Europe/London" });
+      // No extra metadata fields in read output.
+      expect(Object.keys(get)).toEqual(["user.timezone"]);
+
+      const list = (await executeTool("memory_list", {})) as { keys: string[] };
+      expect(list).toEqual({ keys: ["user.timezone"] });
+
+      const filtered = (await executeTool("memory_list", { query: "london" })) as { keys: string[] };
+      expect(filtered.keys).toEqual(["user.timezone"]);
+
+      const forget = (await executeTool("memory_forget", { key: "user.timezone" })) as { k?: string };
+      expect(forget).toEqual({ k: "user.timezone" });
+      const gone = (await executeTool("memory_get", { keys: ["user.timezone"] })) as Record<string, string>;
+      expect(gone).toEqual({});
+    } finally {
+      if (prev === undefined) delete process.env.DUCKAI_MEMORY_PATH;
+      else process.env.DUCKAI_MEMORY_PATH = prev;
+    }
+  });
+
+  test("rejects invalid keys, empties, secrets, and overflow", async () => {
+    process.env.DUCKAI_MEMORY_PATH = memPath();
+    try {
+      expect((await executeTool("memory_set", { key: "NO SPACES", value: "x" })) as { error?: string })
+        .toHaveProperty("error");
+      expect((await executeTool("memory_set", { key: "ok.key", value: "   " })) as { error?: string })
+        .toHaveProperty("error");
+      expect((await executeTool("memory_set", { key: "ok.key", value: "password: hunter2" })) as { error?: string })
+        .toHaveProperty("error");
+      // Unknown forget is an error, not a silent no-op.
+      expect((await executeTool("memory_forget", { key: "nope.key" })) as { error?: string })
+        .toHaveProperty("error");
+      // Oversize values are rejected, not silently truncated.
+      expect((await executeTool("memory_set", { key: "ok.key", value: "x".repeat(2048) })) as { error?: string })
+        .toHaveProperty("error");
+    } finally {
+      if (prev === undefined) delete process.env.DUCKAI_MEMORY_PATH;
+      else process.env.DUCKAI_MEMORY_PATH = prev;
+    }
+  });
+
+  test("entry cap is enforced", async () => {
+    process.env.DUCKAI_MEMORY_PATH = join(testDir, "memory-cap.json");
+    try {
+      for (let i = 0; i < 100; i++) {
+        const r = (await executeTool("memory_set", { key: `k.${i}`, value: "v" })) as { k?: string };
+        expect(r.k).toBe(`k.${i}`);
+      }
+      const over = (await executeTool("memory_set", { key: "k.overflow", value: "v" })) as { error?: string };
+      expect(over.error).toBe("memory full");
+      // Replacing an existing key still works at capacity.
+      const upd = (await executeTool("memory_set", { key: "k.0", value: "new" })) as { k?: string };
+      expect(upd.k).toBe("k.0");
+    } finally {
+      if (prev === undefined) delete process.env.DUCKAI_MEMORY_PATH;
+      else process.env.DUCKAI_MEMORY_PATH = prev;
+    }
+  });
+
+  test("timestamps are kept at rest but never returned to the agent", async () => {
+    const path = join(testDir, "memory-ts.json");
+    process.env.DUCKAI_MEMORY_PATH = path;
+    try {
+      await executeTool("memory_set", { key: "a.key", value: "first" });
+      await executeTool("memory_set", { key: "a.key", value: "second" });
+      const raw = JSON.parse(await Bun.file(path).text()) as {
+        m: Record<string, { v: string; c: number; u: number }>;
+      };
+      expect(raw.m["a.key"]!.v).toBe("second");
+      expect(typeof raw.m["a.key"]!.c).toBe("number");
+      expect(typeof raw.m["a.key"]!.u).toBe("number");
+      expect(raw.m["a.key"]!.c).toBeGreaterThan(0);
+      // Created preserved across the update; updated >= created.
+      expect(raw.m["a.key"]!.u).toBeGreaterThanOrEqual(raw.m["a.key"]!.c);
+      // Reads expose values only — no c/u leakage.
+      const get = (await executeTool("memory_get", { keys: ["a.key"] })) as Record<string, string>;
+      expect(get).toEqual({ "a.key": "second" });
+      expect(JSON.stringify(get)).not.toContain('"c"');
+      const list = (await executeTool("memory_list", {})) as { keys: string[] };
+      expect(JSON.stringify(list)).not.toContain('"c"');
+    } finally {
+      if (prev === undefined) delete process.env.DUCKAI_MEMORY_PATH;
+      else process.env.DUCKAI_MEMORY_PATH = prev;
+    }
+  });
+});
