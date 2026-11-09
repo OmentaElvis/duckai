@@ -123,6 +123,36 @@ describe("fs tools", () => {
     expect(delRes.success).toBe(true);
     expect(existsSync(file)).toBe(false);
   });
+
+  test("delete_file rejects missing path argument", async () => {
+    const res = (await executeTool("delete_file", {})) as { error: string };
+    expect(res.error).toContain("path");
+  });
+
+  test("delete_file refuses to delete filesystem root", async () => {
+    const res = (await executeTool("delete_file", { path: "/" })) as { error: string };
+    expect(res.error).toContain("Refusing to delete");
+  });
+
+  test("delete_file respects protectedPaths setting", async () => {
+    const protectedFile = join(testDir, "do-not-touch.txt");
+    writeFileSync(protectedFile, "important data");
+
+    const settingsFile = join(testDir, "test-settings.json");
+    writeFileSync(
+      settingsFile,
+      JSON.stringify({ protectedPaths: [protectedFile] }),
+    );
+    process.env.DUCKAI_SETTINGS_PATH = settingsFile;
+
+    try {
+      const res = (await executeTool("delete_file", { path: protectedFile })) as { error: string };
+      expect(res.error).toContain("protected path");
+      expect(existsSync(protectedFile)).toBe(true);
+    } finally {
+      delete process.env.DUCKAI_SETTINGS_PATH;
+    }
+  });
 });
 
 describe("search tools", () => {

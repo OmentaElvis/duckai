@@ -394,6 +394,31 @@ export const fileInfoTool: Tool = {
   },
 };
 
+function isPathProtected(fullPath: string): boolean {
+  // Root filesystem is always protected from deletion
+  if (fullPath === "/" || fullPath === "\\") return true;
+
+  try {
+    const settingsPath = process.env.DUCKAI_SETTINGS_PATH || join(homedir(), ".duckai", "settings.json");
+    if (existsSync(settingsPath)) {
+      const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+        protectedPaths?: unknown;
+      };
+      if (Array.isArray(parsed.protectedPaths)) {
+        for (const p of parsed.protectedPaths) {
+          if (typeof p === "string" && p.trim()) {
+            const resolved = resolveUserPath(p.trim());
+            if (resolved === fullPath) return true;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 export const deleteFileTool: Tool = {
   name: "delete_file",
   permission: "ask",
@@ -414,6 +439,11 @@ export const deleteFileTool: Tool = {
     const rawPath = String(args.path ?? "").trim();
     if (!rawPath) return { error: "path is required" };
     const fullPath = resolveUserPath(rawPath);
+
+    if (isPathProtected(fullPath)) {
+      return { error: `Refusing to delete protected path: ${rawPath}` };
+    }
+
     const useTrash = args.trash === undefined ? true : Boolean(args.trash);
 
     if (!existsSync(fullPath)) return { error: `Target not found: ${rawPath}` };

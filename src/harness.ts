@@ -45,6 +45,8 @@ interface Settings {
    * in-conversation "Always allow" prompt grants a *session* (in-memory) only.
    */
   toolPermissions: Record<string, Permission>;
+  /** File or directory paths protected against destructive tools (like delete_file). */
+  protectedPaths?: string[];
 }
 
 const PERMISSIONS: readonly Permission[] = ["allow", "ask", "deny"];
@@ -62,18 +64,24 @@ function readSettings(): Settings {
     const parsed = JSON.parse(readFileSync(settingsPath(), "utf8")) as {
       disabledTools?: unknown;
       toolPermissions?: unknown;
+      protectedPaths?: unknown;
     };
     const disabled = Array.isArray(parsed.disabledTools) ? parsed.disabledTools.map(String) : [];
+    const protectedPaths = Array.isArray(parsed.protectedPaths) ? parsed.protectedPaths.map(String) : [];
     const permissions: Record<string, Permission> = {};
     if (parsed.toolPermissions && typeof parsed.toolPermissions === "object") {
       for (const [name, value] of Object.entries(parsed.toolPermissions as Record<string, unknown>)) {
         if (isPermission(value)) permissions[name] = value;
       }
     }
-    return { disabledTools: disabled, toolPermissions: permissions };
+    return { disabledTools: disabled, toolPermissions: permissions, protectedPaths };
   } catch {
-    return { disabledTools: [], toolPermissions: {} };
+    return { disabledTools: [], toolPermissions: {}, protectedPaths: [] };
   }
+}
+
+export function getProtectedPaths(): string[] {
+  return readSettings().protectedPaths ?? [];
 }
 
 function writeSettings(settings: Settings): void {
@@ -169,6 +177,23 @@ export async function executeTool(
 ): Promise<unknown> {
   const tool = tools.get(name);
   if (!tool) throw new Error(`unknown tool: ${name}`);
+
+  const required =
+    tool.parameters && typeof tool.parameters === "object"
+      ? (tool.parameters as { required?: unknown }).required
+      : undefined;
+
+  if (Array.isArray(required)) {
+    for (const reqKey of required) {
+      if (typeof reqKey === "string") {
+        const val = args[reqKey];
+        if (val === undefined || val === null || (typeof val === "string" && !val.trim())) {
+          return { error: `Missing required argument "${reqKey}" for tool "${name}".` };
+        }
+      }
+    }
+  }
+
   return await tool.execute(args);
 }
 

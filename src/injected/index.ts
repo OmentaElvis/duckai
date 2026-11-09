@@ -8,7 +8,7 @@ import type { HealthReport, HealthStatus } from "../health-report";
 import { callHarness, callHarnessSafe } from "./bridge";
 import { installFetchHook } from "./fetch-hook";
 import { noteEvent, noteFeVersion, runHealthChecks, type HealthOptions } from "./health";
-import { mountApprovalUi } from "./approval-ui";
+import { mountApprovalUi, type ApprovalAnswer } from "./approval-ui";
 import { mountHealthUi, type HealthUi } from "./health-ui";
 import { mountToolsUi, type ToolsUi } from "./tools-ui";
 import { mountSettingsEntry } from "./settings-menu";
@@ -40,7 +40,7 @@ type ExtGlobal = {
     createToolUi: typeof createToolUi;
     getToolView: typeof getToolView;
     health: typeof runHealthChecks;
-    approval?: (name: string, args: Record<string, unknown>) => Promise<string>;
+    approval?: (name: string, args: Record<string, unknown>) => Promise<ApprovalAnswer>;
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   };
 };
@@ -94,6 +94,24 @@ if (!window.__duckai_ext) {
     name: string,
     args: Record<string, unknown>,
   ): Promise<unknown> => {
+    // Pre-flight check: validate required arguments from manifest before prompting user
+    const manifest = ext.tools?.find((t) => t.name === name);
+    const required =
+      manifest?.parameters && typeof manifest.parameters === "object"
+        ? (manifest.parameters as { required?: unknown }).required
+        : undefined;
+
+    if (Array.isArray(required)) {
+      for (const reqKey of required) {
+        if (typeof reqKey === "string") {
+          const val = args[reqKey];
+          if (val === undefined || val === null || (typeof val === "string" && !val.trim())) {
+            return { error: `Missing required argument "${reqKey}" for tool "${name}".` };
+          }
+        }
+      }
+    }
+
     const decision = (await callHarness("authorize", { name })) as {
       level: Permission;
       source: string;
@@ -103,10 +121,13 @@ if (!window.__duckai_ext) {
     }
     if (decision.level === "ask") {
       const answer = await approvalUi.request(name, args);
-      if (answer === "reject") {
-        throw new Error(`The user rejected the "${name}" tool call. Do not retry without asking.`);
+      if (answer.action === "reject") {
+        const reasonMsg = answer.reason
+          ? ` The user provided this feedback/alternative: "${answer.reason}". Follow the user's instructions.`
+          : ` Do not retry without asking.`;
+        throw new Error(`The user rejected the "${name}" tool call.${reasonMsg}`);
       }
-      if (answer === "always") await callHarness("grantSession", { name });
+      if (answer.action === "always") await callHarness("grantSession", { name });
     }
     return callHarness("call", { name, args });
   };
