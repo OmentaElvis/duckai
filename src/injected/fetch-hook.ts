@@ -180,7 +180,7 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
       },
       onEvent: opts.onSSEEvent,
       isCustomTool: (name) => manifest.some((t) => t.name === name),
-      onToolStart: ({ id, name, arguments: args }) => ui.start(id, name, args),
+      onToolStart: ({ id, name, arguments: args, slotId }) => ui.start(id, name, args, slotId),
       onToolEnd: ({ id, name, result, error }) => ui.finish(id, name, result, error),
     };
 

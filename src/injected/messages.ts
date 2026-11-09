@@ -12,6 +12,7 @@
 import {
   FENCE_CLOSE,
   INSTRUCTION_MARKER,
+  stripSlotSentinels,
   TOOL_OPEN,
   TOOL_RESULT_CLOSE,
   TOOL_RESULT_OPEN,
@@ -112,7 +113,9 @@ function resultToText(part: Json, name: string): TextPart {
   return { type: "text", text: `${TOOL_RESULT_OPEN}\n- ${name} -> ${result}\n${TOOL_RESULT_CLOSE}` };
 }
 
-/** Convert custom tool-invocation parts to text; leave everything else as-is. */
+/** Convert custom tool-invocation parts to text; leave everything else as-is.
+ * Also strips display-only slot sentinels from assistant text: they are persisted
+ * by duck.ai for inline placement on reload, but must never be sent to the model. */
 export function sanitizeMessages(messages: WireMessage[]): WireMessage[] {
   return messages.map((m) => {
     if (m.role !== "assistant" || !Array.isArray(m.parts)) return m;
@@ -135,6 +138,19 @@ export function sanitizeMessages(messages: WireMessage[]): WireMessage[] {
           "tool";
         parts.push(p.state === "result" ? resultToText(p, name) : callToText(p, name));
         changed = true;
+      } else if (isTextPart(p)) {
+        const stripped = stripSlotSentinels(p.text);
+        if (stripped !== p.text) {
+          changed = true;
+          // A sentinel-only part was purely a placement placeholder — drop it.
+          if (stripped === "" && p.text.trim() !== "") {
+            // drop
+          } else {
+            parts.push({ ...p, text: stripped });
+          }
+        } else {
+          parts.push(p);
+        }
       } else {
         parts.push(p);
       }

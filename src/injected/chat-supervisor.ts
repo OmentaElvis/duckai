@@ -19,13 +19,20 @@
  *
  * Multi-round tool use is supported up to `maxLoops`.
  */
-import { CUSTOM_TOOL_ID_PREFIX, type ToolCallEnvelope } from "../protocol";
+import {
+  CUSTOM_TOOL_ID_PREFIX,
+  sentinelFor,
+  type ToolCallEnvelope,
+} from "../protocol";
 import { EnvelopeDetector } from "./envelope";
 import { buildContinuation, type ToolResultRecord, type WireMessage } from "./messages";
 import { readSSE, type SSEEvent } from "./sse";
 
 const encoder = new TextEncoder();
 const DEFAULT_MAX_LOOPS = 6;
+
+/** Re-exported for existing imports; canonical home is `../protocol`. */
+export { SLOT_SENTINEL_PREFIX, SLOT_SENTINEL_SUFFIX } from "../protocol";
 
 function sseData(data: string): Uint8Array {
   return encoder.encode(`data: ${data}\n\n`);
@@ -61,8 +68,9 @@ export interface SupervisorDeps {
   onEvent?: (ev: SSEEvent) => void;
   /** Whether `name` is one of our custom (harness-executed) tools. */
   isCustomTool?: (name: string) => boolean;
-  /** UI hook: a custom tool call is about to run. */
-  onToolStart?: (call: { id: string; name: string; arguments: Record<string, unknown> }) => void;
+  /** UI hook: a custom tool call is about to run. slotId is the display-only
+   *  sentinel id; it matches the marker already emitted into the SSE text. */
+  onToolStart?: (call: { id: string; name: string; arguments: Record<string, unknown>; slotId?: string }) => void;
   /** UI hook: a custom tool call finished. */
   onToolEnd?: (call: { id: string; name: string; result: string; error?: string }) => void;
 }
@@ -102,7 +110,14 @@ async function* readRound(
       assistantText += text;
       const step = det.push(text);
       if (step.safeText) yield sseJson({ ...ev.json, message: step.safeText });
-      if (step.calls.length > 0) calls.push(...step.calls);
+      // Emit a display-only sentinel per detected call. Goes into the safeText
+      // display pipe only -- assistantText (the model context) is untouched.
+      // The slot id is persisted in the sidecar so reload can restore position.
+      for (let i = 0; i < step.calls.length; i++) {
+        const slotId = step.callIds[i]!;
+        yield sseJson({ ...ev.json, message: sentinelFor(slotId) });
+        calls.push({ ...step.calls[i]!, _slotId: slotId } as ToolCallEnvelope & { _slotId: string });
+      }
       continue;
     }
 
@@ -174,7 +189,8 @@ export async function* superviseChat(
     const results: ToolResultRecord[] = [];
     for (const call of outcome.calls) {
       const toolCallId = call.toolCallId ?? randomId(CUSTOM_TOOL_ID_PREFIX);
-      deps.onToolStart?.({ id: toolCallId, name: call.name, arguments: call.arguments });
+      const slotId = (call as ToolCallEnvelope & { _slotId?: string })._slotId;
+      deps.onToolStart?.({ id: toolCallId, name: call.name, arguments: call.arguments, slotId });
       yield sseJson({
         action: "success",
         created: Date.now(),

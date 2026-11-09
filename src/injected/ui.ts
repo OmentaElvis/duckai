@@ -30,6 +30,7 @@ import {
   type RenderBlock,
   type ToolCallView,
 } from "./tool-render";
+import { SLOT_SENTINEL_RE_SOURCE } from "../protocol";
 
 export type { RenderBlock, ToolCallView, ToolStatus, ToolView } from "./tool-render";
 
@@ -49,7 +50,7 @@ export interface ToolUiCallbacks {
 }
 
 export interface ToolUi {
-  start(id: string, name: string, args: unknown): void;
+  start(id: string, name: string, args: unknown, slotId?: string): void;
   finish(id: string, name: string, result: string, error?: string): void;
   /** Render previously-persisted calls (used when rehydrating after a reload). */
   restore(calls: StoredCall[]): void;
@@ -337,6 +338,72 @@ interface Card {
  * it to a specific message (used when rehydrating history). Keep itself alive
  * across React re-renders via a MutationObserver.
  */
+
+/** Parse every `duckai-slot:<id>` sentinel in `text` (PUA delimiters optional). */
+export function parseSentinels(text: string): Array<{ slotId: string; start: number; end: number }> {
+  const re = new RegExp(SLOT_SENTINEL_RE_SOURCE, "g");
+  const out: Array<{ slotId: string; start: number; end: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) out.push({ slotId: m[1], start: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+/**
+ * Scan `root` for sentinel text nodes left by the SSE display pipe and replace
+ * each one (including multiple sentinels in a single text node) with an inline
+ * block-level host element. Returns slotId -> host in document order.
+ */
+export function claimSentinels(root: Node): Map<string, HTMLElement> {
+  const result = new Map<string, HTMLElement>();
+  if (typeof document === "undefined" || typeof document.createTreeWalker !== "function") return result;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const toProcess: Text[] = [];
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const text = node.nodeValue ?? "";
+    if (text.includes("duckai-slot:")) toProcess.push(node);
+  }
+  for (const textNode of toProcess) {
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+    // Re-parse against the current value: React may have mutated it since walk.
+    const text = textNode.nodeValue ?? "";
+    const matches = parseSentinels(text);
+    if (matches.length === 0) continue;
+    let cursor = 0;
+    for (const { slotId, start, end } of matches) {
+      const before = text.slice(cursor, start);
+      if (before) parent.insertBefore(document.createTextNode(before), textNode);
+      const host = document.createElement("span");
+      host.setAttribute("data-duckai-slot", slotId);
+      host.style.display = "block";
+      parent.insertBefore(host, textNode);
+      result.set(slotId, host);
+      cursor = end;
+    }
+    const after = text.slice(cursor);
+    if (after) parent.insertBefore(document.createTextNode(after), textNode);
+    try {
+      parent.removeChild(textNode);
+    } catch {
+      /* already removed by React */
+    }
+  }
+  return result;
+}
+
+/** Hosts sorted in document order (TreeWalker insertion order is not guaranteed after merges). */
+function orderedHosts(map: Map<string, HTMLElement>): Array<[string, HTMLElement]> {
+  return [...map.entries()].sort((a, b) => {
+    const pos = a[1].compareDocumentPosition(b[1]);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+}
+
 export function createToolUi(options: ToolUiOptions = {}): ToolUi {
   const root = options.root ?? document;
   const persist = options.persist ?? true;
@@ -349,6 +416,12 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
   const cards = new Map<string, Card>();
   /** Card keys the user expanded/collapsed by hand (we stop managing those). */
   const userToggled = new Set<string>();
+  /** slotId -> inline host span already swapped into the DOM. */
+  const slotHosts = new Map<string, HTMLElement>();
+  /** toolCallId -> slotId (exact placement, persisted across reload). */
+  const callToSlot = new Map<string, string>();
+  /** toolCallId -> ordinal in the turn (fallback when slotId unknown). */
+  const callToOrdinal = new Map<string, number>();
   let disposed = false;
   /**
    * The conversation this controller belongs to: taken from the pin when given,
@@ -434,7 +507,53 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     return true;
   }
 
-  function buildCard(key: string, name: string, args: unknown, live: boolean): Card {
+  function inlineListFor(hostEl: HTMLElement): HTMLElement {
+    let sr = hostEl.shadowRoot;
+    if (!sr) sr = hostEl.attachShadow({ mode: "open" });
+    let l = sr.querySelector(".duckai-tools") as HTMLElement | null;
+    if (!l) {
+      const style = document.createElement("style");
+      style.textContent = STYLES;
+      l = document.createElement("div");
+      l.className = "duckai-tools";
+      sr.append(style, l);
+    }
+    return l;
+  }
+
+  function cardInHost(card: Card, hostEl: HTMLElement): boolean {
+    const sr = hostEl.shadowRoot;
+    if (!sr) return false;
+    const l = sr.querySelector(".duckai-tools") as HTMLElement | null;
+    return Boolean(l?.contains(card.root));
+  }
+
+  function moveCardToHost(card: Card, hostEl: HTMLElement): void {
+    const l = inlineListFor(hostEl);
+    if (card.root.parentElement !== l) l.append(card.root);
+  }
+
+  function resolveHost(callId: string): HTMLElement | null {
+    const sid = callToSlot.get(callId);
+    if (sid) {
+      const h = slotHosts.get(sid);
+      if (h) return h;
+    }
+    const ord = callToOrdinal.get(callId);
+    if (ord !== undefined) {
+      const ordered = orderedHosts(slotHosts);
+      return ordered[ord]?.[1] ?? null;
+    }
+    return null;
+  }
+
+  function refreshSlotHosts(): void {
+    if (!targetEl) return;
+    const found = claimSentinels(targetEl);
+    for (const [sid, el] of found) slotHosts.set(sid, el);
+  }
+
+  function buildCard(key: string, name: string, args: unknown, live: boolean, inlineHost?: HTMLElement): Card {
     const cardEl = document.createElement("details");
     cardEl.className = "call";
     cardEl.dataset.call = key;
@@ -464,8 +583,13 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     body.className = "detail";
 
     cardEl.append(head, body);
-    list?.append(cardEl);
-    return { root: cardEl, key, live, dot, status, nameEl, summaryEl, body, args };
+    const card: Card = { root: cardEl, key, live, dot, status, nameEl, summaryEl, body, args };
+    if (inlineHost) {
+      moveCardToHost(card, inlineHost);
+    } else {
+      list?.append(cardEl);
+    }
+    return card;
   }
 
   /**
@@ -486,24 +610,44 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     if (!userToggled.has(card.key)) card.root.open = call.status === "running" && card.live;
   }
 
-  function start(id: string, name: string, args: unknown): void {
-    if (!ensureHost() || !list) return;
+  function start(id: string, name: string, args: unknown, slotId?: string): void {
     if (cards.has(id)) return;
-    const card = buildCard(id, name, args, true);
+    claimTarget();
+    if (slotId) callToSlot.set(id, slotId);
+    refreshSlotHosts();
+    let inlineHost: HTMLElement | undefined;
+    if (slotId) inlineHost = slotHosts.get(slotId) ?? undefined;
+    let card: Card | null = null;
+    if (inlineHost) {
+      card = buildCard(id, name, args, true, inlineHost);
+    } else if (ensureHost() && list) {
+      card = buildCard(id, name, args, true);
+    }
+    if (!card) return;
     cards.set(id, card);
     renderCard(card, { name, args, status: "running" });
     if (persist) {
       const ht = historyTarget();
-      if (ht) recordStart(ht.conversationId, ht.turn, { id, name, args });
+      if (ht) recordStart(ht.conversationId, ht.turn, { id, name, args, slotId });
     }
   }
 
   function finish(id: string, name: string, result: string, error?: string): void {
-    if (!ensureHost()) return;
     let card = cards.get(id);
     if (!card) {
-      card = buildCard(id, name, undefined, true);
+      claimTarget();
+      refreshSlotHosts();
+      const inlineHost = resolveHost(id);
+      if (inlineHost) {
+        card = buildCard(id, name, undefined, true, inlineHost);
+      } else if (ensureHost() && list) {
+        card = buildCard(id, name, undefined, true);
+      }
+      if (!card) return;
       cards.set(id, card);
+    } else {
+      // Existing card: inline cards need no fallback host; the sentinel
+      // observer keeps them re-attached if React rebuilds the markdown.
     }
     const status = error ? "error" : "ok";
     renderCard(card, { name, args: card.args, status, result, error });
@@ -514,10 +658,27 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
   }
 
   function restore(calls: StoredCall[]): void {
-    if (!ensureHost() || !list) return;
-    for (const call of calls) {
+    claimTarget();
+    if (!targetEl) return;
+    refreshSlotHosts();
+    const hasAnySlotId = calls.some((c) => c.slotId);
+    for (let i = 0; i < calls.length; i++) {
+      const call = calls[i]!;
       if (cards.has(call.id)) continue;
-      const card = buildCard(call.id, call.name, call.args, false);
+      // Ordinal mapping is only safe as the pre-slotId recovery path where
+      // every call in the turn was envelope-sourced (so the nth call is the
+      // nth sentinel). In mixed history, native calls have no sentinel and
+      // would be misplaced by a global ordinal, so they stay fallback.
+      if (!hasAnySlotId) callToOrdinal.set(call.id, i);
+      if (call.slotId) callToSlot.set(call.id, call.slotId);
+      const inlineHost = resolveHost(call.id);
+      let card: Card | null = null;
+      if (inlineHost) {
+        card = buildCard(call.id, call.name, call.args, false, inlineHost);
+      } else if (ensureHost() && list) {
+        card = buildCard(call.id, call.name, call.args, false);
+      }
+      if (!card) continue;
       cards.set(call.id, card);
       const interrupted = call.status === "running";
       renderCard(card, {
@@ -530,17 +691,37 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     }
   }
 
+  const sentinelObserver = new MutationObserver(() => {
+    if (disposed) return;
+    if (!targetEl && pinnedTarget) {
+      // Pinned target may have been replaced by React; re-latch via claimTarget.
+      claimTarget();
+    }
+    if (!targetEl) return;
+    refreshSlotHosts();
+    // Migrate / re-attach every known call to its inline host when that host
+    // appears (live sentinel painted late, or React re-rendered the markdown
+    // and destroyed the previous host element).
+    const ids = new Set<string>([...callToSlot.keys(), ...callToOrdinal.keys()]);
+    for (const callId of ids) {
+      const card = cards.get(callId);
+      if (!card) continue;
+      const iHost = resolveHost(callId);
+      if (!iHost) continue;
+      if (!cardInHost(card, iHost)) moveCardToHost(card, iHost);
+    }
+  });
+
   const observer = new MutationObserver(() => {
     if (disposed) return;
-    if (!host || !host.isConnected) {
+    if (host && !host.isConnected) {
       if (ensureHost()) log.debug(`ui: re-mounted tool cards into ${targetEl?.id ?? "?"}`);
     }
   });
   try {
-    observer.observe(root === document ? document.body : (root as Node), {
-      childList: true,
-      subtree: true,
-    });
+    const obsRoot = root === document ? document.body : (root as Node);
+    observer.observe(obsRoot, { childList: true, subtree: true });
+    sentinelObserver.observe(obsRoot, { childList: true, subtree: true, characterData: true });
   } catch (err) {
     log.warn("ui: observer failed", String(err));
   }
@@ -548,6 +729,7 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
   function dispose(): void {
     disposed = true;
     observer.disconnect();
+    sentinelObserver.disconnect();
     try {
       host?.remove();
     } catch {
@@ -558,6 +740,9 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     list = null;
     cards.clear();
     userToggled.clear();
+    slotHosts.clear();
+    callToSlot.clear();
+    callToOrdinal.clear();
   }
 
   return { start, finish, restore, dispose };

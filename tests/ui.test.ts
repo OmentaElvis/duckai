@@ -6,9 +6,11 @@ import {
   formatArgs,
   formatResult,
   parseAssistantId,
+  parseSentinels,
   placementAnchor,
   summaryFor,
 } from "../src/injected/ui";
+import { sentinelFor, stripSlotSentinels } from "../src/protocol";
 import { clearToolViews, registerToolView } from "../src/injected/tool-render";
 
 /** Minimal ParentNode stub: routes by selector substring. */
@@ -116,6 +118,22 @@ describe("formatResult", () => {
 
   test("keeps JSON scalars verbatim", () => {
     expect(formatResult("42")).toBe("42");
+  });
+});
+
+describe("parseSentinels (inline placement markers)", () => {
+  test("extracts slot ids in document order", () => {
+    const text = `before ${sentinelFor("abc12345")} middle ${sentinelFor("def67890")} after`;
+    expect(parseSentinels(text).map((m) => m.slotId)).toEqual(["abc12345", "def67890"]);
+  });
+
+  test("tolerates stripped PUA delimiters (markdown sanitizer)", () => {
+    expect(parseSentinels("duckai-slot:abc12345").map((m) => m.slotId)).toEqual(["abc12345"]);
+    expect(stripSlotSentinels("a duckai-slot:abc12345 b")).toBe("a  b");
+  });
+
+  test("no sentinel → empty", () => {
+    expect(parseSentinels("hello world")).toEqual([]);
   });
 });
 

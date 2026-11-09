@@ -61,6 +61,12 @@ function heldPrefixLen(s: string): number {
 export interface EnvelopeStep {
   safeText: string;
   calls: ToolCallEnvelope[];
+  /**
+   * When a call was detected: the safeText was emitted *before* the fence, and
+   * the call lands here. The supervisor can use this to emit a display-only
+   * sentinel right after the safeText so the UI knows where to place the card.
+   */
+  callIds: string[];
 }
 
 export class EnvelopeDetector {
@@ -71,6 +77,7 @@ export class EnvelopeDetector {
     this.#buf += chunk;
     let safeText = "";
     const calls: ToolCallEnvelope[] = [];
+    const callIds: string[] = [];
 
     for (;;) {
       const idx = this.#buf.indexOf(TOOL_OPEN);
@@ -95,17 +102,23 @@ export class EnvelopeDetector {
       this.#buf = rest.slice(closeIdx + FENCE_CLOSE.length);
 
       const call = parseToolCallSegment(body);
-      if (call) calls.push(call);
-      else safeText += TOOL_OPEN + body + FENCE_CLOSE;
+      if (call) {
+        calls.push(call);
+        // A per-slot id that lives only in the display pipe. Never reaches the
+        // model context — it's only used to place the tool card in the DOM.
+        callIds.push(Math.random().toString(36).slice(2, 10));
+      } else {
+        safeText += TOOL_OPEN + body + FENCE_CLOSE;
+      }
     }
 
-    return { safeText, calls };
+    return { safeText, calls, callIds };
   }
 
   /** Emit any remaining buffered text at end-of-stream (lossless). */
   flush(): EnvelopeStep {
     const safeText = this.#buf;
     this.#buf = "";
-    return { safeText, calls: [] };
+    return { safeText, calls: [], callIds: [] };
   }
 }

@@ -113,4 +113,19 @@ describe("tool-history", () => {
     expect(pruneHistory(listHistoryConversationIds())).toBe(0);
     expect(loadHistory(CONV)["1"]).toHaveLength(1);
   });
+
+  test("persists slotId so inline placement survives reload", () => {
+    recordStart(CONV, 1, { id: "c1", name: "echo", args: {}, slotId: "slotabc1" });
+    recordEnd(CONV, 1, { id: "c1", name: "echo", result: "hi" });
+    const call = loadHistory(CONV)["1"]![0]!;
+    expect(call.slotId).toBe("slotabc1");
+    expect(call.status).toBe("ok");
+  });
+
+  test("backfills slotId on a duplicate start", () => {
+    recordStart(CONV, 1, { id: "c1", name: "echo", args: {} });
+    recordStart(CONV, 1, { id: "c1", name: "echo", args: {}, slotId: "latest01" });
+    expect(loadHistory(CONV)["1"]).toHaveLength(1);
+    expect(loadHistory(CONV)["1"]![0]!.slotId).toBe("latest01");
+  });
 });

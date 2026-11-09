@@ -58,6 +58,42 @@ export const TOOL_RESULT_CLOSE = "[duckai-ext:tool-result:end]";
 /** Prefix used for locally-generated ids on synthetic tool-invocation events. */
 export const CUSTOM_TOOL_ID_PREFIX = "duckai_ext_call_";
 
+/**
+ * Display-only sentinel emitted immediately after a tool fence is consumed.
+ * It travels only in the SSE display stream (and is therefore persisted by
+ * duck.ai as part of the assistant message text) so the UI can remember where
+ * in the text the tool ran. Never reaches assistantText / continuation.
+ *
+ * Uses PUA Unicode so markdown renderers pass it through as an invisible
+ * glyph. The slot id is also persisted in the sidecar history so a reload
+ * can re-place the card exactly.
+ */
+export const SLOT_SENTINEL_PREFIX = "\uE001duckai-slot:";
+export const SLOT_SENTINEL_SUFFIX = "\uE001";
+
+export function sentinelFor(slotId: string): string {
+  return `${SLOT_SENTINEL_PREFIX}${slotId}${SLOT_SENTINEL_SUFFIX}`;
+}
+
+/** Matches a sentinel even if the PUA delimiters were stripped by markdown sanitizers. */
+export const SLOT_SENTINEL_RE_SOURCE = "\\uE001?duckai-slot:([a-z0-9]+)\\uE001?";
+
+export function slotSentinelRegex(): RegExp {
+  return new RegExp(SLOT_SENTINEL_RE_SOURCE, "g");
+}
+
+export function stripSlotSentinels(text: string): string {
+  return text.replace(new RegExp(SLOT_SENTINEL_RE_SOURCE, "g"), "");
+}
+
+export function extractSlotIds(text: string): string[] {
+  const re = new RegExp(SLOT_SENTINEL_RE_SOURCE, "g");
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.push(m[1]!);
+  return out;
+}
+
 /** Marker embedded in the injected instruction block (idempotency guard). */
 export const INSTRUCTION_MARKER = "[duckai-ext:tools:v1]";
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createChatStream, type SupervisorDeps } from "../src/injected/chat-supervisor";
 import { readSSE, type SSEEvent } from "../src/injected/sse";
-import { FENCE_CLOSE, TOOL_OPEN } from "../src/protocol";
+import { FENCE_CLOSE, stripSlotSentinels, TOOL_OPEN } from "../src/protocol";
 
 const enc = new TextEncoder();
 
@@ -31,6 +31,17 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<SSEEvent[]> {
 }
 
 function assistantText(events: SSEEvent[]): string {
+  // Display stream contains placement sentinels (duckai-slot:…) by design;
+  // strip them for content assertions. Tests that care about placement check
+  // the raw joined text separately.
+  return events
+    .filter((e) => e.json?.role === "assistant")
+    .map((e) => String(e.json!.message ?? ""))
+    .join("")
+    .replace(/\uE001?duckai-slot:[a-z0-9]+\uE001?/g, "");
+}
+
+function rawAssistantText(events: SSEEvent[]): string {
   return events
     .filter((e) => e.json?.role === "assistant")
     .map((e) => String(e.json!.message ?? ""))
@@ -143,8 +154,32 @@ describe("chat supervisor", () => {
     expect(out.some((e) => e.special === "DONE")).toBe(true);
   });
 
-  test("supports multiple tool rounds up to the budget", async () => {
-    let round = 0;
+  test("emits a display sentinel whose slotId reaches onToolStart", async () => {
+    const first = sseResponse([
+      assistant("before "),
+      assistant(toolCall("echo", { text: "hi" })),
+      assistant("after"),
+    ]);
+    let startedSlot: string | undefined;
+    const deps: SupervisorDeps = {
+      callTool: async () => ({ ok: true }),
+      continueChat: async () => sseResponse([assistant("done"), "[DONE]"]),
+      onToolStart: (call) => {
+        startedSlot = call.slotId;
+      },
+    };
+    const out = await drain(createChatStream({ firstResponse: first, messages: [], deps }));
+    const raw = rawAssistantText(out);
+    expect(startedSlot).toBeTruthy();
+    expect(raw).toContain(`duckai-slot:${startedSlot}`);
+    // Sentinel placement is between "before" and "after" in display order.
+    expect(raw.indexOf("before")).toBeLessThan(raw.indexOf(`duckai-slot:${startedSlot}`));
+    expect(raw.indexOf(`duckai-slot:${startedSlot}`)).toBeLessThan(raw.indexOf("after"));
+    // Stripped content reads correctly.
+    expect(stripSlotSentinels(raw)).toBe("before afterdone");
+  });
+
+  test("supports multiple tool rounds up to the budget", async () => {    let round = 0;
     const deps: SupervisorDeps = {
       callTool: async () => ({ round: round++ }),
       continueChat: async () =>

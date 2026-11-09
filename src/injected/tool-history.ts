@@ -35,6 +35,10 @@ export interface StoredCall {
   error?: string;
   status: StoredStatus;
   ts: number;
+  /** Inline placement id: matches the `duckai-slot:<id>` sentinel in the
+   * assistant message text so reload can re-place this card exactly.
+   * Absent for history written before inline persistence. */
+  slotId?: string;
 }
 
 /** Turn number (as a string key) → calls made during that assistant turn. */
@@ -105,19 +109,31 @@ function saveHistory(conversationId: string, data: StoredTurns): void {
 export function recordStart(
   conversationId: string,
   turn: number,
-  call: { id: string; name: string; args: unknown },
+  call: { id: string; name: string; args: unknown; slotId?: string },
 ): void {
   if (!conversationId) return;
   const data = loadHistory(conversationId);
   const key = String(turn);
   const calls = data[key] ?? (data[key] = []);
-  if (calls.some((c) => c.id === call.id)) return;
+  const existing = calls.some((c) => c.id === call.id);
+  if (existing) {
+    // Backfill slotId if it arrives after the first record (defensive).
+    if (call.slotId) {
+      const ex = calls.find((c) => c.id === call.id)!;
+      if (!ex.slotId) {
+        ex.slotId = call.slotId;
+        saveHistory(conversationId, data);
+      }
+    }
+    return;
+  }
   calls.push({
     id: call.id,
     name: call.name,
     args: call.args,
     status: "running",
     ts: Date.now(),
+    ...(call.slotId ? { slotId: call.slotId } : {}),
   });
   if (calls.length > MAX_CALLS_PER_TURN) calls.splice(0, calls.length - MAX_CALLS_PER_TURN);
   saveHistory(conversationId, data);

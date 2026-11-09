@@ -126,6 +126,34 @@ describe("sanitizeMessages", () => {
     expect(String(parts[1]!.text)).toContain("[duckai-ext:tool-result:start]");
     expect(String(parts[1]!.text)).toContain("echo -> 42");
   });
+
+  test("strips slot sentinels so they never reach the model", () => {
+    const sentinel = "\uE001duckai-slot:abc12345\uE001";
+    const messages: WireMessage[] = [
+      {
+        role: "assistant",
+        content: "",
+        parts: [
+          { type: "text", text: `before ${sentinel} after` },
+          { type: "text", text: sentinel },
+        ],
+      },
+    ];
+    const out = sanitizeMessages(messages);
+    expect(out[0]).not.toBe(messages[0]);
+    const parts = out[0]!.parts as Record<string, unknown>[];
+    // Embedded sentinel removed; sentinel-only part dropped.
+    expect(parts).toHaveLength(1);
+    expect(String(parts[0]!.text)).toBe("before  after");
+  });
+
+  test("leaves sentinel-free assistant messages untouched (same reference)", () => {
+    const messages: WireMessage[] = [
+      { role: "assistant", content: "", parts: [{ type: "text", text: "hello" }] },
+    ];
+    const out = sanitizeMessages(messages);
+    expect(out[0]).toBe(messages[0]!);
+  });
 });
 
 describe("buildContinuation", () => {
