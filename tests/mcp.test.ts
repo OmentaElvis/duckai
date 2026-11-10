@@ -66,23 +66,30 @@ describe("mcp gateway", () => {
     expect(res.servers).toEqual(["fake"]);
   });
 
-  test("mcp_tools returns token-lean summaries and honors query", async () => {
-    const res = (await executeTool("mcp_tools", { server: "fake" })) as {
-      tools: Array<{ name: string; props: Record<string, string>; required?: string[]; desc?: string }>;
-    };
-    expect(res.tools.map((t) => t.name)).toEqual(["echo", "fail"]);
-    // Summary, not the full inputSchema dump — but desc is not truncated at 80.
-    expect(res.tools[0]).toEqual(
-      expect.objectContaining({ name: "echo", props: { text: "string" }, required: ["text"] }),
-    );
-    expect(res.tools[0]!.desc).toContain("Echo text back to the caller verbatim");
-    expect((res.tools[0]!.desc ?? "").length).toBeGreaterThan(80);
-    expect(JSON.stringify(res)).not.toContain("inputSchema");
+  test("mcp_tools returns token-lean plain text list and honors query", async () => {
+    const res = (await executeTool("mcp_tools", { server: "fake" })) as string;
+    expect(typeof res).toBe("string");
+    expect(res).toContain("fake tools (2):");
+    expect(res).toContain("- echo:");
+    expect(res).toContain("- fail:");
+    // Zero JSON syntax noise and zero parameter dumps in listing
+    expect(res).not.toContain("inputSchema");
+    expect(res).not.toContain("props");
+    expect(res).not.toContain("required");
 
-    const filtered = (await executeTool("mcp_tools", { server: "fake", query: "echo" })) as {
-      tools: Array<{ name: string }>;
-    };
-    expect(filtered.tools.map((t) => t.name)).toEqual(["echo"]);
+    const filtered = (await executeTool("mcp_tools", { server: "fake", query: "echo" })) as string;
+    expect(filtered).toContain("- echo:");
+    expect(filtered).not.toContain("- fail:");
+  });
+
+  test("mcp_tools inspects single tool parameters in plain text", async () => {
+    const detail = (await executeTool("mcp_tools", { server: "fake", tool: "echo" })) as string;
+    expect(typeof detail).toBe("string");
+    expect(detail).toContain("Tool: echo (fake)");
+    expect(detail).toContain("Parameters:");
+    expect(detail).toContain("text (string, required)");
+    // Does not dump unrequested tools
+    expect(detail).not.toContain("fail");
   });
 
   test("mcp_call flattens text and surfaces isError", async () => {
@@ -124,8 +131,8 @@ describe("mcp gateway", () => {
     );
     const res = (await executeTool("mcp_servers", {})) as { servers: string[] };
     expect(res.servers).toEqual(["fake", "fake2"]);
-    const tools = (await executeTool("mcp_tools", { server: "fake2" })) as { tools: unknown[] };
-    expect(tools.tools.length).toBeGreaterThan(0);
+    const tools = (await executeTool("mcp_tools", { server: "fake2" })) as string;
+    expect(tools).toContain("fake2 tools");
   });
 
   test("UI config API: upsert/list/delete without leaking env values", async () => {

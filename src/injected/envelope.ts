@@ -71,9 +71,25 @@ export interface EnvelopeStep {
 
 export class EnvelopeDetector {
   #buf = "";
+  #modelText = "";
+  #hasCall = false;
+
+  /** Full assistant text accumulated up to (and including) the tool fence (if any). */
+  get modelText(): string {
+    return this.#modelText;
+  }
+
+  /** Whether a valid tool call fence was closed and captured. */
+  get hasCall(): boolean {
+    return this.#hasCall;
+  }
 
   /** Feed a text delta; returns immediately-renderable text and any calls. */
   push(chunk: string): EnvelopeStep {
+    if (this.#hasCall) {
+      return { safeText: "", calls: [], callIds: [] };
+    }
+
     this.#buf += chunk;
     let safeText = "";
     const calls: ToolCallEnvelope[] = [];
@@ -84,12 +100,17 @@ export class EnvelopeDetector {
       if (idx === -1) {
         const held = heldPrefixLen(this.#buf);
         const cut = this.#buf.length - held;
-        safeText += this.#buf.slice(0, cut);
+        const text = this.#buf.slice(0, cut);
+        safeText += text;
+        this.#modelText += text;
         this.#buf = this.#buf.slice(cut);
         break;
       }
 
-      safeText += this.#buf.slice(0, idx);
+      const textBefore = this.#buf.slice(0, idx);
+      safeText += textBefore;
+      this.#modelText += textBefore;
+
       const rest = this.#buf.slice(idx + TOOL_OPEN.length);
       const closeIdx = rest.indexOf(FENCE_CLOSE);
       if (closeIdx === -1) {
@@ -99,16 +120,23 @@ export class EnvelopeDetector {
       }
 
       const body = rest.slice(0, closeIdx);
-      this.#buf = rest.slice(closeIdx + FENCE_CLOSE.length);
-
       const call = parseToolCallSegment(body);
       if (call) {
         calls.push(call);
         // A per-slot id that lives only in the display pipe. Never reaches the
         // model context — it's only used to place the tool card in the DOM.
         callIds.push(Math.random().toString(36).slice(2, 10));
+        this.#modelText += TOOL_OPEN + body + FENCE_CLOSE;
+        this.#hasCall = true;
+        // Tool call detected: stop processing and discard any trailing post-fence
+        // buffer to eliminate hallucinated post-call tokens.
+        this.#buf = "";
+        break;
       } else {
-        safeText += TOOL_OPEN + body + FENCE_CLOSE;
+        const nonCallBlock = TOOL_OPEN + body + FENCE_CLOSE;
+        safeText += nonCallBlock;
+        this.#modelText += nonCallBlock;
+        this.#buf = rest.slice(closeIdx + FENCE_CLOSE.length);
       }
     }
 
@@ -117,7 +145,12 @@ export class EnvelopeDetector {
 
   /** Emit any remaining buffered text at end-of-stream (lossless). */
   flush(): EnvelopeStep {
+    if (this.#hasCall) {
+      this.#buf = "";
+      return { safeText: "", calls: [], callIds: [] };
+    }
     const safeText = this.#buf;
+    this.#modelText += this.#buf;
     this.#buf = "";
     return { safeText, calls: [], callIds: [] };
   }

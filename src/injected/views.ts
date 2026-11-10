@@ -156,11 +156,31 @@ registerToolView("mcp_servers", {
 
 registerToolView("mcp_tools", {
   summary: (c) => {
-    const a = c.args as { server?: string } | undefined;
+    const a = c.args as { server?: string; tool?: string } | undefined;
+    if (a?.tool) return `${a?.server ?? "mcp"}: ${a.tool}`;
     const tools = parse<{ tools?: unknown[] }>(c.result)?.tools;
-    return tools ? `${a?.server ?? "mcp"}: ${tools.length} tool${tools.length === 1 ? "" : "s"}` : `tools ${a?.server ?? ""}`;
+    if (tools) return `${a?.server ?? "mcp"}: ${tools.length} tool${tools.length === 1 ? "" : "s"}`;
+    if (typeof c.result === "string") {
+      const match = /(\d+)\s+tools/.exec(c.result);
+      if (match) return `${a?.server ?? "mcp"}: ${match[1]} tools`;
+    }
+    return `tools ${a?.server ?? ""}`;
   },
   body: (c) => {
+    if (typeof c.result === "string" && !c.result.trim().startsWith("{")) {
+      const lines = c.result.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) return [{ kind: "text", text: "No tools." }];
+      if (lines[0]?.startsWith("Tool:")) {
+        return [{ kind: "text", text: c.result }];
+      }
+      const header = lines[0]?.endsWith(":") ? lines[0] : "";
+      const bulletLines = header ? lines.slice(1) : lines;
+      const items = bulletLines.map((l) => l.replace(/^[-\s*]+/, ""));
+      return [
+        ...(header ? [{ kind: "text" as const, text: header }] : []),
+        { kind: "list" as const, items: items.length ? items : [c.result] },
+      ];
+    }
     const tools = parse<{
       tools?: Array<{
         name?: string;
@@ -171,7 +191,7 @@ registerToolView("mcp_tools", {
         inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
       }>;
     }>(c.result)?.tools;
-    if (!tools) return [];
+    if (!tools) return [{ kind: "text", text: typeof c.result === "string" ? c.result : "No tools." }];
     const items = tools.map((t) => {
       const parts: string[] = [String(t.name ?? "tool")];
       const desc = t.desc ?? t.description;
@@ -213,6 +233,44 @@ registerToolView("mcp_call", {
       value: typeof v === "string" ? v : JSON.stringify(v),
     }));
     return fields.length ? [{ kind: "fields", fields }] : [];
+  },
+});
+
+// --- Large-result paging tools ---
+
+registerToolView("result_read", {
+  summary: (c) => {
+    const a = c.args as { ref?: string; start_line?: number } | undefined;
+    const r = parse<{ total_lines?: number; has_more?: boolean }>(c.result);
+    return `read ${a?.ref ?? "result"}${r?.total_lines ? ` (${r.total_lines} lines)` : ""}`;
+  },
+  body: (c) => {
+    const r = parse<{ content?: string; start_line?: number; total_lines?: number; has_more?: boolean }>(c.result);
+    if (!r?.content) return [];
+    return [
+      {
+        kind: "fields",
+        fields: [
+          { label: "Lines", value: `${r.start_line ?? 1}–${(r.start_line ?? 1) + r.content.split("\n").length - 1} of ${r.total_lines ?? "?"}` },
+          { label: "More", value: r.has_more ? "yes" : "no" },
+        ],
+      },
+      { kind: "code", text: r.content },
+    ];
+  },
+});
+
+registerToolView("result_grep", {
+  summary: (c) => {
+    const a = c.args as { ref?: string; query?: string } | undefined;
+    const r = parse<{ matches?: unknown[] }>(c.result);
+    return `grep ${a?.ref ?? "result"}${a?.query ? ` '${a.query}'` : ""}${r?.matches ? ` (${r.matches.length})` : ""}`;
+  },
+  body: (c) => {
+    const r = parse<{ matches?: Array<{ line: number; text: string }> }>(c.result);
+    if (!r?.matches) return [];
+    const items = r.matches.map((m) => `${m.line}: ${m.text}`);
+    return items.length ? [{ kind: "list", items }] : [{ kind: "text", text: "No matches." }];
   },
 });
 

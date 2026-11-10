@@ -63,7 +63,7 @@ export interface SupervisorDeps {
   /** Execute a custom tool via the Bun harness. */
   callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
   /** Issue a follow-up chat request for the given conversation. */
-  continueChat(messages: WireMessage[]): Promise<Response>;
+  continueChat(messages: WireMessage[], signal?: AbortSignal): Promise<Response>;
   /** Observation hook for every parsed event (first + continuations). */
   onEvent?: (ev: SSEEvent) => void;
   /** Whether `name` is one of our custom (harness-executed) tools. */
@@ -77,6 +77,8 @@ export interface SupervisorDeps {
 
 export interface SupervisorInput {
   firstResponse: Response;
+  /** AbortController for the initial response, allowing early stream termination. */
+  firstController?: AbortController;
   /** The prepared conversation that produced `firstResponse` (instructions injected). */
   messages: WireMessage[];
   deps: SupervisorDeps;
@@ -94,71 +96,90 @@ interface RoundOutcome {
 async function* readRound(
   upstream: Response,
   deps: SupervisorDeps,
+  abortController?: AbortController,
 ): AsyncGenerator<Uint8Array, RoundOutcome, void> {
   const det = new EnvelopeDetector();
-  let assistantText = "";
   const calls: ToolCallEnvelope[] = [];
   let shape: Record<string, unknown> = { action: "success", role: "assistant", message: "" };
   let done = false;
 
-  for await (const ev of readSSE(upstream.body!)) {
-    deps.onEvent?.(ev);
+  const stopUpstream = () => {
+    try {
+      abortController?.abort();
+    } catch {
+      /* ignore */
+    }
+  };
 
-    if (ev.json?.role === "assistant" && typeof ev.json.message === "string") {
-      shape = { ...ev.json };
-      const text = ev.json.message as string;
-      assistantText += text;
-      const step = det.push(text);
-      if (step.safeText) yield sseJson({ ...ev.json, message: step.safeText });
-      // Emit a display-only sentinel per detected call. Goes into the safeText
-      // display pipe only -- assistantText (the model context) is untouched.
-      // The slot id is persisted in the sidecar so reload can restore position.
-      for (let i = 0; i < step.calls.length; i++) {
-        const slotId = step.callIds[i]!;
-        yield sseJson({ ...ev.json, message: sentinelFor(slotId) });
-        calls.push({ ...step.calls[i]!, _slotId: slotId } as ToolCallEnvelope & { _slotId: string });
+  try {
+    for await (const ev of readSSE(upstream.body!)) {
+      deps.onEvent?.(ev);
+
+      if (ev.json?.role === "assistant" && typeof ev.json.message === "string") {
+        shape = { ...ev.json };
+        const text = ev.json.message as string;
+        const step = det.push(text);
+        if (step.safeText) yield sseJson({ ...ev.json, message: step.safeText });
+        // Emit a display-only sentinel per detected call. Goes into the safeText
+        // display pipe only -- assistantText (the model context) is untouched.
+        // The slot id is persisted in the sidecar so reload can restore position.
+        for (let i = 0; i < step.calls.length; i++) {
+          const slotId = step.callIds[i]!;
+          yield sseJson({ ...ev.json, message: sentinelFor(slotId) });
+          calls.push({ ...step.calls[i]!, _slotId: slotId } as ToolCallEnvelope & { _slotId: string });
+        }
+        if (calls.length > 0) {
+          // Tool call detected: halt upstream immediately to prevent hallucinated
+          // tokens from bleeding into the conversation before real tool execution.
+          stopUpstream();
+          break;
+        }
+        continue;
       }
-      continue;
-    }
 
-    // Native tool call for one of OUR tools: capture it and drop the event (we
-    // emit our own synthetic call/result events and drive the continuation).
-    if (
-      ev.json?.role === "tool-invocation" &&
-      typeof ev.json.toolName === "string" &&
-      deps.isCustomTool?.(ev.json.toolName)
-    ) {
-      if (ev.json.state === "call") {
-        calls.push({
-          name: ev.json.toolName,
-          arguments: parseToolArguments(ev.json.toolArguments),
-          native: true,
-          toolCallId: typeof ev.json.toolCallId === "string" ? ev.json.toolCallId : undefined,
-        });
+      // Native tool call for one of OUR tools: capture it and drop the event (we
+      // emit our own synthetic call/result events and drive the continuation).
+      if (
+        ev.json?.role === "tool-invocation" &&
+        typeof ev.json.toolName === "string" &&
+        deps.isCustomTool?.(ev.json.toolName)
+      ) {
+        if (ev.json.state === "call") {
+          calls.push({
+            name: ev.json.toolName,
+            arguments: parseToolArguments(ev.json.toolArguments),
+            native: true,
+            toolCallId: typeof ev.json.toolCallId === "string" ? ev.json.toolCallId : undefined,
+          });
+          stopUpstream();
+          break;
+        }
+        continue;
       }
-      continue;
-    }
 
-    if (ev.special?.startsWith("DONE")) {
-      const tail = det.flush();
-      if (tail.safeText) yield sseJson({ ...shape, message: tail.safeText });
-      done = true;
-      // Suppress DONE when tool rounds must follow: it would finalize the
-      // message before the continuation is spliced in.
-      if (calls.length === 0) yield sseData(ev.data);
-      break;
-    }
+      if (ev.special?.startsWith("DONE")) {
+        const tail = det.flush();
+        if (tail.safeText) yield sseJson({ ...shape, message: tail.safeText });
+        done = true;
+        // Suppress DONE when tool rounds must follow: it would finalize the
+        // message before the continuation is spliced in.
+        if (calls.length === 0) yield sseData(ev.data);
+        break;
+      }
 
-    // Structural event (tool-invocation, ui-component, source, PING, …).
-    yield sseData(ev.data);
+      // Structural event (tool-invocation, ui-component, source, PING, …).
+      yield sseData(ev.data);
+    }
+  } catch (err) {
+    if (calls.length === 0) throw err;
   }
 
-  if (!done) {
+  if (!done && calls.length === 0) {
     const tail = det.flush();
     if (tail.safeText) yield sseJson({ ...shape, message: tail.safeText });
   }
 
-  return { assistantText, calls, assistantShape: shape, done };
+  return { assistantText: det.modelText, calls, assistantShape: shape, done };
 }
 
 export async function* superviseChat(
@@ -168,6 +189,7 @@ export async function* superviseChat(
   const maxLoops = input.maxLoops ?? DEFAULT_MAX_LOOPS;
   let messages = input.messages;
   let upstream: Response = input.firstResponse;
+  let currentController: AbortController | undefined = input.firstController;
   let lastShape: Record<string, unknown> = {
     action: "success",
     role: "assistant",
@@ -182,7 +204,7 @@ export async function* superviseChat(
       return;
     }
 
-    const outcome = yield* readRound(upstream, deps);
+    const outcome = yield* readRound(upstream, deps, currentController);
     lastShape = outcome.assistantShape;
     if (outcome.calls.length === 0) return;
 
@@ -233,9 +255,13 @@ export async function* superviseChat(
 
     messages = buildContinuation(messages, outcome.assistantText, results);
 
+    // Brief breathing room to ensure DuckDuckGo clears the concurrency lock of the previous stream
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const nextController = new AbortController();
     let next: Response;
     try {
-      next = await deps.continueChat(messages);
+      next = await deps.continueChat(messages, nextController.signal);
     } catch (e) {
       yield sseJson({
         ...lastShape,
@@ -245,14 +271,19 @@ export async function* superviseChat(
       return;
     }
     if (!next.ok || !next.body) {
+      let errDetail = "";
+      try {
+        errDetail = (await next.clone().text()).slice(0, 300);
+      } catch {}
       yield sseJson({
         ...lastShape,
-        message: `\n\n[duckai-ext] continuation rejected (HTTP ${next.status}).`,
+        message: `\n\n[duckai-ext] continuation rejected (HTTP ${next.status}${errDetail ? `: ${errDetail}` : ""}).`,
       });
       yield sseData("[DONE]");
       return;
     }
     upstream = next;
+    currentController = nextController;
   }
 
   yield sseJson({

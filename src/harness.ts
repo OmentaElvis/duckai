@@ -20,6 +20,7 @@ import {
   upsertMcpServer,
 } from "./mcp/client";
 import type { ManagedTool, Permission, PermissionSource, ToolInfo, ToolManifestEntry } from "./protocol";
+import { maybeOffload } from "./tools/results";
 import { coreTools } from "./tools";
 
 export type { ToolManifestEntry };
@@ -177,6 +178,9 @@ export function setToolEnabled(name: string, enabled: boolean): ManagedTool[] {
   return listToolStatus();
 }
 
+/** Tools whose results must never be offloaded (paging/discovery themselves). */
+const NO_OFFLOAD = new Set(["result_read", "result_grep"]);
+
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
@@ -200,7 +204,15 @@ export async function executeTool(
     }
   }
 
-  return await tool.execute(args);
+  const result = await tool.execute(args);
+  // Lossless offload: large results become a small stub + ref, recoverable
+  // via result_read/result_grep instead of being truncated away.
+  if (NO_OFFLOAD.has(name)) return result;
+  try {
+    return maybeOffload(name, result);
+  } catch {
+    return result;
+  }
 }
 
 /** Wire-protocol handler. Never throws. */

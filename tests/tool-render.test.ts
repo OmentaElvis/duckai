@@ -79,4 +79,13 @@ describe("callBody", () => {
     });
     expect(callBody({ name: "t", args: {}, status: "ok" })).toBeUndefined();
   });
+
+  test("offloaded stubs always render as preview + ref, even with a registered view", () => {
+    registerToolView("t", { body: () => [{ kind: "text", text: "original" }] });
+    const stub = JSON.stringify({ ref: "r_abc", preview: "first bytes", bytes: 9999, lines: 100 });
+    const blocks = callBody({ name: "t", args: {}, status: "ok", result: stub })!;
+    expect(JSON.stringify(blocks)).toContain("r_abc");
+    expect(JSON.stringify(blocks)).toContain("first bytes");
+    expect(JSON.stringify(blocks)).not.toContain("original");
+  });
 });

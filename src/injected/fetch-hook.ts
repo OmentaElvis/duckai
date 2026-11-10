@@ -150,7 +150,8 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
     };
 
     const requestVqd = requestHeaders["x-vqd-hash-1"] ?? requestHeaders["X-Vqd-Hash-1"];
-    const upstream = await origFetch(url, outInit);
+    const firstController = new AbortController();
+    const upstream = await origFetch(url, { ...outInit, signal: firstController.signal });
 
     // 4) Supervise the SSE response (execute custom tool calls + continue).
     if (!upstream.ok || !upstream.body) {
@@ -165,7 +166,8 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
     }
     log.info(`chat response ← status=${upstream.status} streaming (supervised)`);
 
-    const freshChallenge = upstream.headers.get("x-vqd-hash-1");
+    let currentChallenge = upstream.headers.get("x-vqd-hash-1");
+    let currentVqd = requestVqd;
     const baseHeaders = outInit.headers as Record<string, string>;
 
     // Custom widget layer: renders our tool calls inside this turn's assistant
@@ -174,8 +176,20 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
 
     const deps: SupervisorDeps = {
       callTool: (name, args) => opts.callTool!(name, args),
-      continueChat: async (msgs) => {
-        const built = await buildContinuationRequest(baseHeaders, effectiveParsed, msgs, requestVqd, freshChallenge, origFetch);
+      continueChat: async (msgs, signal) => {
+        const built = await buildContinuationRequest(
+          baseHeaders,
+          effectiveParsed,
+          msgs,
+          currentVqd,
+          currentChallenge,
+          origFetch,
+          signal,
+        );
+        const nextChallenge = built.headers.get("x-vqd-hash-1");
+        if (nextChallenge) {
+          currentChallenge = nextChallenge;
+        }
         return built;
       },
       onEvent: opts.onSSEEvent,
@@ -184,7 +198,12 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
       onToolEnd: ({ id, name, result, error }) => ui.finish(id, name, result, error),
     };
 
-    const stream = createChatStream({ firstResponse: upstream, messages, deps });
+    const stream = createChatStream({
+      firstResponse: upstream,
+      firstController,
+      messages,
+      deps,
+    });
     return new Response(stream, {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -202,6 +221,7 @@ async function buildContinuationRequest(
   requestVqd: string | undefined,
   freshChallenge: string | null,
   origFetch: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<Response> {
   // Prefer a freshly solved challenge; fall back to the original solution.
   let vqd: string | undefined = requestVqd;
@@ -227,13 +247,20 @@ async function buildContinuationRequest(
   }
   const body = JSON.stringify(nextBody);
   const doFetch = (token: string | undefined): Promise<Response> =>
-    origFetch("/duckchat/v1/chat", { method: "POST", headers: makeHeaders(token), body });
+    origFetch("/duckchat/v1/chat", { method: "POST", headers: makeHeaders(token), body, signal });
 
   let res = await doFetch(vqd);
   if (res.ok) return res;
 
-  // Retry once with a challenge fetched/solved from /status.
-  log.warn(`continuation HTTP ${res.status}; refreshing vqd challenge`);
+  let errDetail = "";
+  try {
+    errDetail = await res.clone().text();
+  } catch {}
+  log.warn(`continuation HTTP ${res.status}: ${errDetail.slice(0, 300)}; refreshing vqd challenge`);
+
+  // Wait a short moment to clear concurrency/rate-limit before querying /status
+  await new Promise((resolve) => setTimeout(resolve, 800));
+
   const refreshed = await fetchAndSolveVqd(origFetch);
   if (refreshed) {
     res = await doFetch(refreshed);

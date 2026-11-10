@@ -87,10 +87,50 @@ export function callSummary(call: ToolCallView): string | undefined {
   }
 }
 
+/** Large-result stub produced by the harness offload layer (see results.ts). */
+export function parseResultStub(result: string | undefined): {
+  ref: string;
+  preview: string;
+  bytes: number;
+  lines: number;
+} | null {
+  if (!result) return null;
+  try {
+    const v = JSON.parse(result) as Record<string, unknown>;
+    if (v && typeof v === "object" && typeof v.ref === "string" && typeof v.preview === "string") {
+      return {
+        ref: v.ref,
+        preview: v.preview,
+        bytes: typeof v.bytes === "number" ? v.bytes : 0,
+        lines: typeof v.lines === "number" ? v.lines : 0,
+      };
+    }
+  } catch {
+    /* not a stub */
+  }
+  return null;
+}
+
 /**
  * Safe body lookup: a throwing view degrades to `undefined` (neutral default).
+ * Offloaded large results always render as the stub (preview + ref) so the
+ * inline card shows the same handle the model received.
  */
 export function callBody(call: ToolCallView): RenderBlock[] | undefined {
+  const stub = parseResultStub(call.result);
+  if (stub) {
+    return [
+      {
+        kind: "fields",
+        fields: [
+          { label: "Ref", value: stub.ref },
+          { label: "Size", value: `${stub.bytes} B · ${stub.lines} lines` },
+        ],
+      },
+      { kind: "code", label: "Preview", text: stub.preview },
+      { kind: "text", text: "Large result offloaded — use result_read / result_grep with the ref." },
+    ];
+  }
   const view = registry.get(call.name);
   if (!view?.body) return undefined;
   try {

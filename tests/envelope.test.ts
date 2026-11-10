@@ -32,16 +32,18 @@ describe("EnvelopeDetector", () => {
     expect(calls).toEqual([{ name: "echo", arguments: { text: "hi" } }]);
   });
 
-  test("strips a call embedded in prose", () => {
+  test("strips a call embedded in prose and halts post-call text", () => {
     const { text, calls } = feed([`Let me check. ${CALL} Done.`]);
-    expect(text).toBe("Let me check.  Done.");
+    // Only preceding text is emitted; post-fence text (" Done.") is discarded.
+    expect(text).toBe("Let me check. ");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.name).toBe("echo");
   });
 
   test("byte-splitting resilience: one char at a time", () => {
     const { text, calls } = feed([`Before ${CALL} after`].flatMap((s) => [...s]));
-    expect(text).toBe("Before  after");
+    // Post-fence text (" after") is discarded upon closing fence detection.
+    expect(text).toBe("Before ");
     expect(calls).toEqual([{ name: "echo", arguments: { text: "hi" } }]);
   });
 
@@ -88,10 +90,17 @@ describe("EnvelopeDetector", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("multiple calls in one chunk", () => {
+  test("halts at the first call and discards subsequent trailing calls", () => {
     const two = `${CALL}${TOOL_OPEN}\n{"name":"echo","arguments":{"text":"two"}}\n${FENCE_CLOSE}`;
     const { calls } = feed([two]);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.arguments).toEqual({ text: "two" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.arguments).toEqual({ text: "hi" });
+  });
+
+  test("modelText captures clean assistant text up to fence close", () => {
+    const det = new EnvelopeDetector();
+    det.push(`Let me check: ${CALL} Here is hallucinated fake result`);
+    expect(det.modelText).toBe(`Let me check: ${CALL}`);
+    expect(det.hasCall).toBe(true);
   });
 });

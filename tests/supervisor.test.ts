@@ -110,7 +110,7 @@ describe("chat supervisor", () => {
     expect(out.filter((e) => e.special === "DONE")).toHaveLength(1);
   });
 
-  test("handles envelope split across deltas", async () => {
+  test("handles envelope split across deltas and halts post-call text", async () => {
     const first = sseResponse([
       assistant("prefix "),
       assistant(TOOL_OPEN),
@@ -123,7 +123,8 @@ describe("chat supervisor", () => {
       continueChat: async () => sseResponse([assistant("done"), "[DONE]"]),
     };
     const out = await drain(createChatStream({ firstResponse: first, messages: [], deps }));
-    expect(assistantText(out)).toBe("prefix suffixdone");
+    // "suffix" was post-fence hallucinated text and is discarded
+    expect(assistantText(out)).toBe("prefix done");
   });
 
   test("surfaces tool errors and still continues", async () => {
@@ -158,7 +159,6 @@ describe("chat supervisor", () => {
     const first = sseResponse([
       assistant("before "),
       assistant(toolCall("echo", { text: "hi" })),
-      assistant("after"),
     ]);
     let startedSlot: string | undefined;
     const deps: SupervisorDeps = {
@@ -172,11 +172,42 @@ describe("chat supervisor", () => {
     const raw = rawAssistantText(out);
     expect(startedSlot).toBeTruthy();
     expect(raw).toContain(`duckai-slot:${startedSlot}`);
-    // Sentinel placement is between "before" and "after" in display order.
+    // Sentinel placement is right after "before" and before continuation "done"
     expect(raw.indexOf("before")).toBeLessThan(raw.indexOf(`duckai-slot:${startedSlot}`));
-    expect(raw.indexOf(`duckai-slot:${startedSlot}`)).toBeLessThan(raw.indexOf("after"));
+    expect(raw.indexOf(`duckai-slot:${startedSlot}`)).toBeLessThan(raw.indexOf("done"));
     // Stripped content reads correctly.
-    expect(stripSlotSentinels(raw)).toBe("before afterdone");
+    expect(stripSlotSentinels(raw)).toBe("before done");
+  });
+
+  test("aborts upstream stream and discards post-fence text upon tool call", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode(`data: ${assistant("Thinking... ")}\n\n`));
+        controller.enqueue(enc.encode(`data: ${assistant(toolCall("echo", { text: "real" }))}\n\n`));
+        controller.enqueue(enc.encode(`data: ${assistant("I hallucinated a fake answer")}\n\n`));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const first = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    let continuationMessages: unknown[] = [];
+    const deps: SupervisorDeps = {
+      callTool: async () => ({ ok: true }),
+      continueChat: async (messages) => {
+        continuationMessages = messages;
+        return sseResponse([assistant("Actual answer"), "[DONE]"]);
+      },
+    };
+    const out = await drain(createChatStream({ firstResponse: first, messages: [], deps }));
+    expect(assistantText(out)).toBe("Thinking... Actual answer");
+    expect(assistantText(out)).not.toContain("hallucinated");
+    expect(cancelled).toBe(true);
+
+    const assistantMsg = continuationMessages[0] as { role: string; parts: { text: string }[] };
+    expect(assistantMsg.parts[0]!.text).not.toContain("hallucinated");
+    expect(assistantMsg.parts[0]!.text).toContain(TOOL_OPEN);
   });
 
   test("supports multiple tool rounds up to the budget", async () => {    let round = 0;
