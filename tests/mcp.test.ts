@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeTool, handleHarnessCall } from "../src/harness";
 import { closeAllMcpClients, loadAllMcpServers } from "../src/mcp/client";
+import { mcpSchemaTool, mcpToolsTool } from "../src/tools/mcp";
 
 let testDir = "";
 let serverPath = "";
@@ -33,6 +34,15 @@ rl.on("line", (line) => {
     send({ jsonrpc: "2.0", id: msg.id, result: { tools: [
       { name: "echo", description: "Echo text back to the caller verbatim so the agent can confirm roundtrip behavior without any transformation applied to the payload", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
       { name: "fail", description: "Always fails", inputSchema: { type: "object", properties: {} } },
+      { name: "click", description: "Click an element on the page", inputSchema: { type: "object", properties: {
+        selector: { type: "string", description: "CSS selector of the target" },
+        button: { type: "string", enum: ["left", "right"], default: "left", description: "Mouse button" },
+        options: { type: "object", description: "Advanced click options", properties: {
+          count: { type: "integer", minimum: 1, description: "Number of clicks" },
+          delayMs: { type: "number" },
+        }, required: ["count"] },
+        tags: { type: "array", items: { type: "string" }, description: "Labels" },
+      }, required: ["selector"] } },
     ] } });
   } else if (msg.method === "tools/call") {
     const name = msg.params?.name;
@@ -66,20 +76,71 @@ describe("mcp gateway", () => {
     expect(res.servers).toEqual(["fake"]);
   });
 
-  test("mcp_tools returns token-lean plain text list and honors query", async () => {
+  test("mcp_tools returns token-lean plain text list (query param removed)", async () => {
     const res = (await executeTool("mcp_tools", { server: "fake" })) as string;
     expect(typeof res).toBe("string");
-    expect(res).toContain("fake tools (2):");
+    expect(res).toContain("fake tools (3):");
     expect(res).toContain("- echo:");
     expect(res).toContain("- fail:");
+    expect(res).toContain("- click:");
     // Zero JSON syntax noise and zero parameter dumps in listing
     expect(res).not.toContain("inputSchema");
     expect(res).not.toContain("props");
     expect(res).not.toContain("required");
 
-    const filtered = (await executeTool("mcp_tools", { server: "fake", query: "echo" })) as string;
+    // `query` is gone from the schema: filtering was dropped in favor of
+    // per-tool schema lookups via mcp_schema.
+    const props = (mcpToolsTool.parameters as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props)).toEqual(["server", "tool", "limit"]);
+    expect(props.query).toBeUndefined();
+
+    const filtered = (await executeTool("mcp_tools", {
+      server: "fake",
+      query: "echo",
+    })) as string;
+    expect(filtered).toContain("fake tools (3):");
     expect(filtered).toContain("- echo:");
-    expect(filtered).not.toContain("- fail:");
+    expect(filtered).toContain("- fail:");
+  });
+
+  test("mcp_schema returns the full schema of one tool as a compact tree", async () => {
+    const schema = (await executeTool("mcp_schema", { server: "fake", tool: "click" })) as string;
+    expect(typeof schema).toBe("string");
+    expect(schema).toContain("Tool: click (fake)");
+    expect(schema).toContain("Description: Click an element on the page");
+    expect(schema).toContain("Schema: object");
+    // Top level: required/optional markers, enums and defaults.
+    expect(schema).toContain("  - selector (string, required) - CSS selector of the target");
+    expect(schema).toContain("  - button (string:left|right, optional) [default='left'] - Mouse button");
+    // Nested object properties recurse, carrying their own required set.
+    expect(schema).toContain("  - options (object, optional) - Advanced click options");
+    expect(schema).toContain("    - count (integer, required) [minimum=1] - Number of clicks");
+    expect(schema).toContain("    - delayMs (number, optional)");
+    // Array item types are spelled out.
+    expect(schema).toContain("  - tags (array<string>, optional) - Labels");
+    // Only the requested tool, and no raw JSON syntax.
+    expect(schema).not.toContain("fail");
+    expect(schema).not.toContain("inputSchema");
+    expect(schema).not.toContain("{");
+
+    const params = mcpSchemaTool.parameters as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(params.properties)).toEqual(["server", "tool"]);
+    expect(params.required).toEqual(["server", "tool"]);
+  });
+
+  test("mcp_schema errors cleanly for missing, unknown and absent tools", async () => {
+    const missing = (await executeTool("mcp_schema", { server: "fake" })) as { error?: string };
+    expect(missing.error).toContain('"tool"');
+    const unknown = (await executeTool("mcp_schema", {
+      server: "fake",
+      tool: "nope",
+    })) as { error?: string };
+    expect(unknown.error).toContain('Tool "nope" not found on server "fake"');
+    const noServer = (await executeTool("mcp_schema", { tool: "click" })) as { error?: string };
+    expect(noServer.error).toContain('"server"');
   });
 
   test("mcp_tools inspects single tool parameters in plain text", async () => {

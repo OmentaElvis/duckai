@@ -218,6 +218,29 @@ registerToolView("mcp_tools", {
   },
 });
 
+registerToolView("mcp_schema", {
+  summary: (c) => {
+    const a = c.args as { server?: string; tool?: string } | undefined;
+    return `${a?.server ?? "mcp"}:${a?.tool ?? "schema"}`;
+  },
+  body: (c) => {
+    const text = typeof c.result === "string" ? c.result.trim() : "";
+    if (!text) return [];
+    // Errors (and anything else that came back as JSON) render verbatim.
+    if (text.startsWith("{")) return [{ kind: "text", text }];
+    const lines = text.split("\n");
+    const header = lines.filter((l) => /^(Tool|Description|Schema):/.test(l));
+    const tree = lines.filter((l) => l.trimStart().startsWith("- "));
+    if (!header.length && !tree.length) return [{ kind: "text", text }];
+    return [
+      ...(header.length ? [{ kind: "text" as const, text: header.join("\n") }] : []),
+      ...(tree.length
+        ? [{ kind: "code" as const, label: "Parameters", text: tree.join("\n") }]
+        : []),
+    ];
+  },
+});
+
 registerToolView("mcp_call", {
   summary: (c) => {
     const a = c.args as { server?: string; tool?: string } | undefined;
