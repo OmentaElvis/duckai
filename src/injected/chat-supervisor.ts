@@ -29,7 +29,7 @@ import { buildContinuation, type ToolResultRecord, type WireMessage } from "./me
 import { readSSE, type SSEEvent } from "./sse";
 
 const encoder = new TextEncoder();
-const DEFAULT_MAX_LOOPS = 6;
+const DEFAULT_MAX_LOOPS = 32;
 
 /** Re-exported for existing imports; canonical home is `../protocol`. */
 export { SLOT_SENTINEL_PREFIX, SLOT_SENTINEL_SUFFIX } from "../protocol";
