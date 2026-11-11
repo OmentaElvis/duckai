@@ -334,21 +334,23 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
   }
 }
 
-// --- Phase 1 demo tool -----------------------------------------------------
 
-registerTool({
-  name: "echo",
-  permission: "allow",
-  description: "Echo back the provided text. Smoke-test tool for the harness bridge.",
-  parameters: {
-    type: "object",
-    properties: {
-      text: { type: "string", description: "Text to echo back." },
+const isTest = process.env.NODE_ENV === "test";
+if (isTest) {
+  registerTool({
+    name: "echo",
+    permission: "allow",
+    description: "Echo back the provided text. Smoke-test tool for the harness bridge.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to echo back." },
+      },
+      required: ["text"],
     },
-    required: ["text"],
-  },
-  execute: (args) => ({ echoed: String(args.text ?? ""), at: Date.now() }),
-});
+    execute: (args) => ({ echoed: String(args.text ?? ""), at: Date.now() }),
+  });
+}
 
 // --- Core tools registration -----------------------------------------------
 
