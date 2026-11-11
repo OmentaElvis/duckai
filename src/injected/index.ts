@@ -19,6 +19,7 @@ import { getToolView, registerToolView, unregisterToolView } from "./tool-render
 import { registerBuiltinViews } from "./views";
 import { pruneHistory } from "./tool-history";
 import { savedConversationIds } from "./chat-store";
+import { applyCustomizations } from "./customizations";
 
 type ExtGlobal = {
   version: string;
@@ -79,9 +80,9 @@ if (!window.__duckai_ext) {
     const kind = ev.special ? `[${ev.special}]` : ((ev.json?.role as string) ?? "unknown");
     // High-volume deltas stay at debug; structural events surface at info.
     if (ev.json?.role === "assistant" && ev.json.message !== "") {
-      log.debug(`sse assistant delta: ${JSON.stringify(ev.json.message)}`);
+      // log.debug(`sse assistant delta: ${JSON.stringify(ev.json.message)}`);
     } else {
-      log.info(`sse event #${sseStats.events}: ${kind}`, ev.json ?? ev.data);
+      log.debug(`sse event #${sseStats.events}: ${kind}`, ev.json ?? ev.data);
     }
     callHarnessSafe("sseEvent", { json: ev.json, special: ev.special });
   };
@@ -227,6 +228,8 @@ if (!window.__duckai_ext) {
     label: "Manage tools",
     onOpen: () => toolsUi?.open(),
   });
+
+  applyCustomizations();
 
   // Restore widget rows for historical tool calls after a reload / when a
   // saved conversation is (re)opened. Debounced: the observer fires a lot.
