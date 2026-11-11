@@ -46,24 +46,65 @@ export const runCommandTool: Tool = {
       return { error: `Failed to spawn command: ${err instanceof Error ? err.message : String(err)}` };
     }
 
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    // Drain a readable stream into a string without blocking on stream close.
+    // Returns whatever has been collected so far when the signal fires.
+    const drainStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
+      if (!stream) return "";
+      const reader = stream.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
       try {
-        proc.kill();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            totalBytes += value.byteLength;
+            if (totalBytes >= MAX_OUTPUT_BYTES) break; // stop collecting early — truncation applied below
+          }
+        }
       } catch {
-        // already exited
+        // Stream closed/aborted — return what we have
+      } finally {
+        try { reader.cancel(); } catch { /* ignore */ }
       }
-    }, timeoutMs);
+      return new TextDecoder().decode(
+        chunks.reduce((acc, chunk) => {
+          const merged = new Uint8Array(acc.byteLength + chunk.byteLength);
+          merged.set(acc);
+          merged.set(chunk, acc.byteLength);
+          return merged;
+        }, new Uint8Array(0)),
+      );
+    };
 
+    let timedOut = false;
+
+    // We race the process exit against the timeout. When the timeout fires we
+    // kill the process; the kill causes the pipes to close, which unblocks the
+    // stream readers — so we do NOT need a separate abort mechanism.
+    let timer: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try { proc.kill(); } catch { /* already exited */ }
+        resolve();
+      }, timeoutMs);
+    });
+
+    // Drain streams and wait for exit, but bail as soon as the timeout resolves.
+    // After a kill the pipes close quickly so the drain promises settle shortly
+    // after timeoutPromise resolves — we let them race naturally.
     try {
       const [stdoutText, stderrText, exitCode] = await Promise.all([
-        proc.stdout ? new Response(proc.stdout as BodyInit).text() : "",
-        proc.stderr ? new Response(proc.stderr as BodyInit).text() : "",
-        proc.exited,
+        drainStream(proc.stdout as ReadableStream<Uint8Array> | null),
+        drainStream(proc.stderr as ReadableStream<Uint8Array> | null),
+        // exited resolves with the exit code once the process is gone; after
+        // kill() this will also resolve quickly.
+        Promise.race([proc.exited, timeoutPromise.then(() => proc.exited)]).then(() => proc.exitCode ?? -1),
       ]);
 
-      clearTimeout(timer);
+      clearTimeout(timer!);
 
       const truncate = (s: string) => {
         if (s.length > MAX_OUTPUT_BYTES) {
@@ -79,7 +120,6 @@ export const runCommandTool: Tool = {
         timed_out: timedOut,
       };
     } catch (err) {
-      clearTimeout(timer);
       return {
         error: `Command execution failed: ${err instanceof Error ? err.message : String(err)}`,
         timed_out: timedOut,

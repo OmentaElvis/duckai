@@ -1,5 +1,5 @@
 /**
- * Page → Bun bridge over webview-bun's `bind()`ed `harnessCall` global.
+ * Page → Bun bridge over webview-bun's `bindRaw()`ed `__harnessNativeCall` global.
  *
  * The bound function is registered natively before navigation, but we look it
  * up lazily at call time to be independent of user-script ordering.
@@ -11,7 +11,7 @@ type HarnessResponse = { ok: boolean; result?: unknown; error?: string };
 
 declare global {
   interface Window {
-    harnessCall?: (req: HarnessRequest) => Promise<HarnessResponse>;
+    __harnessNativeCall?: (req: HarnessRequest) => Promise<HarnessResponse>;
   }
 }
 
@@ -30,7 +30,7 @@ function waitFor<T>(get: () => T | undefined, timeoutMs = 5000, intervalMs = 25)
 
 /** Call a harness method on the Bun side. Rejects with a descriptive Error. */
 export async function callHarness(method: string, params?: unknown): Promise<unknown> {
-  const call = await waitFor(() => window.harnessCall);
+  const call = await waitFor(() => window.__harnessNativeCall);
   const res = await call({ method, params });
   if (!res || typeof res !== "object") throw new Error(`harness: malformed response for ${method}`);
   if (!res.ok) throw new Error(res.error ?? `harness: ${method} failed`);

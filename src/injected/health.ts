@@ -86,11 +86,11 @@ function messageOf(err: unknown): string {
 async function probeBridge(): Promise<HealthCheck> {
   const id = "bridge";
   const label = "Harness bridge (page ⇄ Bun IPC)";
-  if (typeof window.harnessCall !== "function") {
-    return fail(id, label, "window.harnessCall missing");
+  if (typeof window.__harnessNativeCall !== "function") {
+    return fail(id, label, "window.__harnessNativeCall missing");
   }
   try {
-    const res = await window.harnessCall({ method: "ping" });
+    const res = await window.__harnessNativeCall({ method: "ping" });
     return res?.ok ? ok(id, label, "ping ok") : fail(id, label, res?.error ?? "ping not ok");
   } catch (err) {
     return fail(id, label, messageOf(err));
