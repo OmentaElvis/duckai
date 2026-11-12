@@ -17,7 +17,7 @@
  *     duck.ai's design tokens (CSS custom properties) inherit across the
  *     shadow boundary — so our cards theme themselves for light/dark for free.
  */
-import { log } from "./log";
+import { log as rootLog } from "./log";
 import {
   loadHistory,
   recordEnd,
@@ -31,6 +31,8 @@ import {
   type ToolCallView,
 } from "./tool-render";
 import { SLOT_SENTINEL_RE_SOURCE } from "../protocol";
+
+const log = rootLog.child("ui");
 
 export type { RenderBlock, ToolCallView, ToolStatus, ToolView } from "./tool-render";
 

@@ -1,38 +1,24 @@
-type Level = "debug" | "info" | "warn" | "error";
+/**
+ * Page-side logger.
+ *
+ * Deliberately plain text: no `%c` styling or CSS strings, because the WebKit
+ * console can forward these verbatim to the app's terminal. Entries use the
+ * same `HH:MM:SS.mmm LEVEL scope` prefix as the Bun host; index.ts forwards
+ * info/warn/error entries over the bridge so both runtimes share one timeline.
+ */
+import { createLogger, formatPrefix, type LogEntry } from "../logging/core";
 
-export interface LogEntry {
-  t: number;
-  level: Level;
-  msg: string;
-  data?: unknown;
+export type { LogEntry } from "../logging/core";
+
+function sink(entry: LogEntry): void {
+  const line = `${formatPrefix(entry)} | ${entry.msg}`;
+  const write = console[entry.level] ?? console.log;
+  if (entry.data === undefined) write(line);
+  else write(line, entry.data);
 }
 
-const HISTORY_MAX = 500;
-const history: LogEntry[] = [];
-const forward: ((e: LogEntry) => void)[] = [];
-
-function emit(level: Level, msg: string, data?: unknown) {
-  const entry: LogEntry = { t: Date.now(), level, msg, data };
-  history.push(entry);
-  if (history.length > HISTORY_MAX) history.shift();
-  const fn = console[level] ?? console.log;
-  fn.call(console, `%c[duck-ext] ${msg}`, "color:#d4a017;font-weight:bold", data ?? "");
-  for (const f of forward) {
-    try {
-      f(entry);
-    } catch {
-      /* forwarders must never break logging */
-    }
-  }
-}
-
-export const log = {
-  debug: (msg: string, data?: unknown) => emit("debug", msg, data),
-  info: (msg: string, data?: unknown) => emit("info", msg, data),
-  warn: (msg: string, data?: unknown) => emit("warn", msg, data),
-  error: (msg: string, data?: unknown) => emit("error", msg, data),
-  history,
-  onEntry(fn: (e: LogEntry) => void) {
-    forward.push(fn);
-  },
-};
+export const log = createLogger({
+  scope: "page",
+  sink,
+  minLevel: "debug",
+});

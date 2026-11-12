@@ -23,9 +23,11 @@ import {
 } from "../health-report";
 import { savedConversationIds } from "./chat-store";
 import { EnvelopeDetector } from "./envelope";
-import { log } from "./log";
+import { log as rootLog } from "./log";
 import { assistantElements, parseAssistantId, placementAnchor } from "./ui";
 import { solveVqdChallenge } from "./vqd";
+
+const log = rootLog.child("health");
 
 /** SSE roles we understand / pass through. Anything else is drift. */
 export const EXPECTED_SSE_ROLES: ReadonlySet<string> = new Set([

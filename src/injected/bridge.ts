@@ -4,7 +4,9 @@
  * The bound function is registered natively before navigation, but we look it
  * up lazily at call time to be independent of user-script ordering.
  */
-import { log } from "./log";
+import { log as rootLog } from "./log";
+
+const log = rootLog.child("bridge");
 
 type HarnessRequest = { method: string; params?: unknown };
 type HarnessResponse = { ok: boolean; result?: unknown; error?: string };

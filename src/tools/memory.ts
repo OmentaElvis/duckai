@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Tool } from "../harness";
+import { log } from "../logging/host";
 
 // Bounded, token-lean global memory: key -> short fact, durable across
 // sessions/chats. On-disk keeps accounting timestamps (c/u) that are
@@ -68,7 +69,7 @@ function save(): void {
     writeFileSync(tmp, JSON.stringify({ m: load() }));
     renameSync(tmp, path);
   } catch (err) {
-    console.log("[harness] failed to persist memory:", err instanceof Error ? err.message : err);
+    log.child("memory").warn("failed to persist", err instanceof Error ? err.message : err);
   }
 }
 

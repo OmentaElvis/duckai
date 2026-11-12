@@ -7,7 +7,9 @@
  * styling instead of hard-coding markup. A single shared observer keeps all
  * registered entries mounted across menu re-renders.
  */
-import { log } from "./log";
+import { log as rootLog } from "./log";
+
+const log = rootLog.child("settings");
 
 export interface SettingsEntry {
   destroy(): void;

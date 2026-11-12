@@ -11,6 +11,7 @@
  * fires after the window is mapped.
  */
 import { dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi";
+import { log } from "./logging/host";
 
 const cstr = (s: string): Pointer => ptr(new TextEncoder().encode(`${s}\0`));
 
@@ -126,7 +127,7 @@ export function scheduleWindowNudge(
       if (width > 1 && height > 1) {
         gtk.symbols.gtk_window_set_default_size(win as never, width + 1, height + 1);
         gtk.symbols.gtk_window_set_default_size(win as never, width, height);
-        console.log(`[duckai] window nudge: ${width}x${height}`);
+        log.child("window").debug(`nudge: ${width}x${height}`);
       }
     } catch {
       // best-effort

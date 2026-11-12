@@ -11,6 +11,7 @@ import { dlopen, FFIType, JSCallback } from "bun:ffi";
 import { SizeHint, Webview } from "webview-bun";
 import { INJECT_SCRIPT } from "./generated/inject-script";
 import { applyWindowTheme, scheduleWindowNudge } from "./native";
+import { log } from "./logging/host";
 import {
   IPC_IDLE,
   IPC_RESPONSE,
@@ -29,7 +30,12 @@ const { control, data } = viewsOf(buffer);
 const postMessage = (message: WorkerMessage): void =>
   (self as unknown as { postMessage(message: WorkerMessage): void }).postMessage(message);
 
-const webview = new Webview(process.env.DUCKAI_DEBUG !== "0", {
+// Devtools are opt-in: webview-bun also enables WebKit's
+// `enable-write-console-messages-to-stdout` in debug mode, which mirrors every
+// page console call to the terminal as `user-script:… CONSOLE INFO …`. Page
+// logs already reach the host through the bridge, so debug stays off unless
+// explicitly requested with DUCKAI_DEBUG=1.
+const webview = new Webview(process.env.DUCKAI_DEBUG === "1", {
   width: 1280,
   height: 860,
   hint: SizeHint.NONE,
@@ -151,7 +157,7 @@ try {
 } catch (err) {
   // GLib unavailable (should not happen on Linux/GTK). Fall back to the original
   // synchronous bridge so the app remains functional at the cost of ANR during long calls.
-  console.warn("[duckai] g_timeout_add unavailable — falling back to synchronous bridge:", err);
+  log.warn("g_timeout_add unavailable — falling back to synchronous bridge", err);
   webview.bind("__harnessNativeCall", (req: unknown): unknown => {
     if (Atomics.load(control, 0) !== IPC_IDLE) {
       return { ok: false, error: "harness host is busy" };

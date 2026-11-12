@@ -11,6 +11,9 @@
  * Special (non-JSON) payloads are bracketed tokens: [PING], [DONE],
  * [CHAT_TITLE:…], [DONE][STOP_REASON:…].
  */
+import { log } from "./log";
+
+const sseLog = log.child("sse");
 
 export interface SSEEvent {
   /** Raw payload after the "data: " prefix (may be partial-JSON garbage on errors). */
@@ -66,7 +69,7 @@ export function dispatch(ev: SSEEvent): void {
     try {
       hook(ev);
     } catch (err) {
-      console.error("[duck-ext] sse hook threw", err);
+      sseLog.error("hook threw", err);
     }
   }
 }
@@ -125,7 +128,7 @@ export function createObservingStream(): TransformStream<Uint8Array, Uint8Array>
       try {
         parser.push(decoder.decode(chunk, { stream: true }));
       } catch (err) {
-        console.error("[duck-ext] sse parse error", err);
+        sseLog.error("parse error", err);
       }
       controller.enqueue(chunk);
     },

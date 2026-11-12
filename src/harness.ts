@@ -13,6 +13,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { summarizeHealth, type HealthReport } from "./health-report";
+import { isLogLevel, type LogEntry } from "./logging/core";
+import { log, supportsColor } from "./logging/host";
 import {
   deleteMcpServer,
   listMcpServersForUi,
@@ -97,7 +99,7 @@ function writeSettings(settings: Settings): void {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify(settings, null, 2));
   } catch (err) {
-    console.log("[harness] failed to persist settings:", err instanceof Error ? err.message : err);
+    log.child("settings").warn("failed to persist", err instanceof Error ? err.message : err);
   }
 }
 
@@ -223,23 +225,36 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
       case "ping":
         return { ok: true, result: { pong: Date.now() } };
       case "pageReady":
-        console.log("[harness] page ready:", JSON.stringify(params));
+        log.child("bridge").info("page ready", params);
         return { ok: true, result: { version: "0.1.0" } };
       case "selfCheck": {
         const p = params as { telemetryBlocked?: boolean; bridgeOk?: boolean; error?: string };
         const status = p.telemetryBlocked && p.bridgeOk ? "OK" : "FAIL";
-        console.log(`[harness] self-check: ${status}`, JSON.stringify(params));
+        log.child("health").info(`self-check: ${status}`, params);
         return { ok: true, result: { status } };
       }
       case "health": {
         const report = (params as { report?: HealthReport } | undefined)?.report;
         if (!report) return { ok: false, error: "missing health report" };
-        console.log(summarizeHealth(report, { color: true }));
+        log.child("health").info(summarizeHealth(report, { color: supportsColor() }));
         return { ok: true, result: { status: report.status } };
       }
       case "log": {
-        const p = params as { level?: string; msg?: string; data?: unknown };
-        console.log(`[page:${p.level ?? "info"}] ${p.msg ?? ""}`, p.data ?? "");
+        const p = params as {
+          t?: unknown;
+          level?: unknown;
+          scope?: unknown;
+          msg?: unknown;
+          data?: unknown;
+        };
+        const entry: LogEntry = {
+          t: typeof p.t === "number" ? p.t : Date.now(),
+          level: isLogLevel(p.level) ? p.level : "info",
+          scope: typeof p.scope === "string" && p.scope ? p.scope : "page",
+          msg: typeof p.msg === "string" ? p.msg : String(p.msg ?? ""),
+        };
+        if (p.data !== undefined) entry.data = p.data;
+        log.ingest(entry);
         return { ok: true, result: null };
       }
       case "sseEvent": {
@@ -247,10 +262,9 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         // Structural events only — deltas are too chatty for stdout.
         const role = p.json?.role;
         if (p.special || (role && role !== "assistant")) {
-          console.log(
-            `[sse] ${p.special ? `[${p.special}]` : role}`,
-            p.special ? "" : JSON.stringify(p.json).slice(0, 400),
-          );
+          log
+            .child("sse")
+            .info(p.special ? `[${p.special}]` : String(role), p.special ? undefined : p.json);
         }
         return { ok: true, result: null };
       }
@@ -322,7 +336,7 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
       case "call": {
         const p = params as { name?: string; args?: Record<string, unknown> };
         if (!p?.name) return { ok: false, error: "missing tool name" };
-        console.log(`[harness] tool call: ${p.name}`, p.args ?? {});
+        log.child("tool").info(`call ${p.name}`, p.args ?? {});
         const result = await executeTool(p.name, p.args ?? {});
         return { ok: true, result };
       }

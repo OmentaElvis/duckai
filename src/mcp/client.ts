@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { log } from "../logging/host";
 
 // Minimal MCP client (stdio, tools-only) + lazy manager.
 // Only one stdio process per configured server, spawned on first use
@@ -195,7 +196,7 @@ class McpClient {
         const { done, value } = await reader.read();
         if (done) break;
         const line = dec.decode(value, { stream: true }).trim();
-        if (line) console.log("[mcp stderr]", line.slice(0, 200));
+        if (line) log.child("mcp").debug("stderr", line.slice(0, 200));
       }
     } catch {
       /* process ended */

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Tool } from "../harness";
+import { log } from "../logging/host";
 
 // Lossless offload for large tool results: results over the threshold
 // are persisted locally and the model gets a small stub with a `ref`.
@@ -65,7 +66,7 @@ function save(): void {
     writeFileSync(tmp, JSON.stringify(load()));
     renameSync(tmp, path);
   } catch (err) {
-    console.log("[harness] failed to persist results:", err instanceof Error ? err.message : err);
+    log.child("results").warn("failed to persist", err instanceof Error ? err.message : err);
   }
 }
 

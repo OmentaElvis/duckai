@@ -6,6 +6,7 @@
  * and answers the worker's blocking IPC requests over a SharedArrayBuffer.
  */
 import { handleHarnessCall } from "./harness";
+import { log } from "./logging/host";
 import {
   IPC_REQUEST,
   IPC_RESPONSE,
@@ -34,7 +35,7 @@ if (process.platform === "linux") {
   }
 }
 
-console.log("[duckai] starting webview worker");
+log.info("starting webview worker");
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url));
 
@@ -50,7 +51,7 @@ worker.onmessage = async (event: MessageEvent) => {
 
   if (message.type === "req") {
     if (!views) {
-      console.error("[duckai] harness request before init");
+      log.error("harness request before init");
       return;
     }
     const { control, data } = views;
@@ -81,5 +82,5 @@ worker.onmessage = async (event: MessageEvent) => {
 };
 
 worker.onerror = (event: ErrorEvent) => {
-  console.error("[duckai] worker error:", event.message ?? event);
+  log.error("worker error", event.message ?? event);
 };

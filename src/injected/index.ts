@@ -69,6 +69,14 @@ if (!window.__duckai_ext) {
   };
   window.__duckai_ext = ext;
 
+  // Mirror info/warn/error entries to the host so the terminal shows one
+  // unified timeline. Debug stays in the page console only (high volume).
+  // Registered before any subsystem starts so early logs are not lost.
+  log.onEntry((e: LogEntry) => {
+    if (e.level === "debug") return;
+    callHarnessSafe("log", { t: e.t, level: e.level, scope: e.scope, msg: e.msg, data: e.data });
+  });
+
   registerBuiltinViews();
 
   const isCustomTool = (name: string) => ext.tools.some((t) => t.name === name);
@@ -77,11 +85,12 @@ if (!window.__duckai_ext) {
     sseStats.events++;
     sseStats.last = ev.json ?? ev.special ?? ev.data;
     noteEvent(ev, isCustomTool);
-    const kind = ev.special ? `[${ev.special}]` : ((ev.json?.role as string) ?? "unknown");
-    // High-volume deltas stay at debug; structural events surface at info.
-    if (ev.json?.role === "assistant" && ev.json.message !== "") {
-      // log.debug(`sse assistant delta: ${JSON.stringify(ev.json.message)}`);
-    } else {
+    // Assistant text deltas are high-volume and carry no structural signal.
+    // Logging them floods both the devtools console and the host terminal, so
+    // only structural events (specials / non-assistant roles) are emitted.
+    const isDelta = ev.json?.role === "assistant" && ev.json.message !== "";
+    if (!isDelta) {
+      const kind = ev.special ? `[${ev.special}]` : ((ev.json?.role as string) ?? "unknown");
       log.debug(`sse event #${sseStats.events}: ${kind}`, ev.json ?? ev.data);
     }
     callHarnessSafe("sseEvent", { json: ev.json, special: ev.special });
@@ -139,13 +148,6 @@ if (!window.__duckai_ext) {
     getManifest: () => ext.tools,
     callTool: (name, args) => authorizeAndCall(name, args),
     onChat: (info) => noteFeVersion(info.feVersion),
-  });
-
-  // Forward warn/error-level log entries to the host console as well.
-  log.onEntry((e: LogEntry) => {
-    if (e.level === "warn" || e.level === "error") {
-      callHarnessSafe("log", { level: e.level, msg: e.msg, data: e.data });
-    }
   });
 
   // Plugin health check. Runs once after the manifest loads (deep, including a

@@ -13,11 +13,13 @@
  */
 import { renderToolInstructions, type ToolManifestEntry } from "../protocol";
 import { createChatStream, type SupervisorDeps } from "./chat-supervisor";
-import { log } from "./log";
+import { log as rootLog } from "./log";
 import { prepareMessages, sanitizeMessages, type WireMessage } from "./messages";
 import { createObservingStream, onSSEEvent, type SSEEventHook } from "./sse";
 import { createToolUi } from "./ui";
 import { fetchAndSolveVqd, solveVqdChallenge } from "./vqd";
+
+const log = rootLog.child("fetch");
 
 const CHAT_URL_RE = /\/duckchat\/v1\/chat(?:\?|$)/;
 const TELEMETRY_RE = /^https?:\/\/(improving\.duckduckgo\.com)(?=\/|$)/i;

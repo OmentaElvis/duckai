@@ -12,7 +12,9 @@
  * This is best-effort: on any failure we return null and the caller falls back
  * to reusing the previous request's solution.
  */
-import { log } from "./log";
+import { log as rootLog } from "./log";
+
+const log = rootLog.child("vqd");
 
 function b64decode(b64: string): string {
   const bin = atob(b64);

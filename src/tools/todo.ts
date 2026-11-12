@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Tool } from "../harness";
+import { log } from "../logging/host";
 
 interface TodoItem {
   id: number;
@@ -39,7 +40,7 @@ function saveTodos(): void {
       JSON.stringify({ items: loadTodos(), nextId: todoNextId }, null, 2),
     );
   } catch (err) {
-    console.log("[harness] failed to persist todos:", err instanceof Error ? err.message : err);
+    log.child("todo").warn("failed to persist", err instanceof Error ? err.message : err);
   }
 }
 
