@@ -8,19 +8,26 @@
  * with an alternative instruction (e.g. "don't delete, edit instead").
  */
 
+import type { PermissionScope } from "../protocol";
+
 export type ApprovalAnswer =
   | { action: "once" }
-  | { action: "always" }
+  | { action: "always"; scope?: string }
   | { action: "reject"; reason?: string };
 
 export interface ApprovalUi {
-  request(name: string, args: Record<string, unknown>): Promise<ApprovalAnswer>;
+  request(
+    name: string,
+    args: Record<string, unknown>,
+    scopes?: PermissionScope[],
+  ): Promise<ApprovalAnswer>;
   destroy(): void;
 }
 
 interface Pending {
   name: string;
   args: Record<string, unknown>;
+  scopes?: PermissionScope[];
   resolve: (answer: ApprovalAnswer) => void;
 }
 
@@ -57,6 +64,13 @@ function findPromptBar(): HTMLElement | null {
 function formatPreview(name: string, args: Record<string, unknown>): string {
   if (name === "run_command" && typeof args.command === "string") {
     return `$ ${args.command}`;
+  }
+  if (name === "mcp_call") {
+    const s = String(args.server ?? "");
+    const t = String(args.tool ?? "");
+    const innerArgs = (args.arguments ?? args.args ?? {}) as Record<string, unknown>;
+    const innerStr = JSON.stringify(innerArgs);
+    return `${s} → ${t}(${innerStr.length > 80 ? innerStr.slice(0, 80) + "…" : innerStr})`;
   }
   if (
     (name === "write_file" || name === "edit_file" || name === "delete_file" || name === "read_file") &&
@@ -248,6 +262,53 @@ const STYLES = `
     background: rgba(224, 82, 82, 0.15);
     border-color: #e05252;
   }
+  .confirm-panel {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    animation: fadeIn 0.15s ease-out;
+  }
+  .confirm-subtitle {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: -2px;
+    margin-bottom: 2px;
+  }
+  .scope-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--h-hover, rgba(255, 255, 255, 0.04));
+    border-radius: 8px;
+    border: 1px solid var(--h-border, rgba(255, 255, 255, 0.12));
+  }
+  .scope-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .scope-item input[type="radio"] {
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: #3969ef;
+  }
+  .scope-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .scope-label {
+    font-weight: 500;
+    color: var(--h-fg, #eee);
+  }
+  .scope-desc {
+    font-size: 11px;
+    opacity: 0.65;
+  }
 `;
 
 export function mountApprovalUi(): ApprovalUi {
@@ -304,7 +365,7 @@ export function mountApprovalUi(): ApprovalUi {
   const alwaysBtn = document.createElement("button");
   alwaysBtn.type = "button";
   alwaysBtn.className = "btn";
-  alwaysBtn.textContent = "Always allow (session)";
+  alwaysBtn.textContent = "Always allow…";
 
   const onceBtn = document.createElement("button");
   onceBtn.type = "button";
@@ -312,7 +373,54 @@ export function mountApprovalUi(): ApprovalUi {
   onceBtn.textContent = "Allow once";
 
   actions.append(rejectBtn, alwaysBtn, onceBtn);
-  card.append(header, preview, details, feedbackBox, actions);
+
+  const mainPanel = document.createElement("div");
+  mainPanel.className = "main-panel";
+  mainPanel.style.display = "flex";
+  mainPanel.style.flexDirection = "column";
+  mainPanel.style.gap = "8px";
+  mainPanel.append(header, preview, details, feedbackBox, actions);
+
+  const confirmPanel = document.createElement("div");
+  confirmPanel.className = "confirm-panel";
+
+  const confirmHeader = document.createElement("div");
+  confirmHeader.className = "header";
+  const confirmBadgeRow = document.createElement("div");
+  confirmBadgeRow.className = "badge-row";
+  const confirmBadge = document.createElement("span");
+  confirmBadge.className = "badge";
+  confirmBadge.textContent = "Confirm Grant";
+  const confirmTitle = document.createElement("span");
+  confirmTitle.className = "title";
+  confirmTitle.textContent = "Select scope to always allow for this session:";
+  confirmBadgeRow.append(confirmBadge, confirmTitle);
+  confirmHeader.append(confirmBadgeRow);
+
+  const confirmSubtitle = document.createElement("div");
+  confirmSubtitle.className = "confirm-subtitle";
+  confirmSubtitle.textContent = "Subsequent matching calls will run without prompting.";
+
+  const scopeList = document.createElement("div");
+  scopeList.className = "scope-list";
+
+  const confirmActions = document.createElement("div");
+  confirmActions.className = "actions";
+
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "btn";
+  backBtn.textContent = "Back";
+
+  const confirmAlwaysBtn = document.createElement("button");
+  confirmAlwaysBtn.type = "button";
+  confirmAlwaysBtn.className = "btn primary";
+  confirmAlwaysBtn.textContent = "Confirm Always Allow";
+
+  confirmActions.append(backBtn, confirmAlwaysBtn);
+  confirmPanel.append(confirmHeader, confirmSubtitle, scopeList, confirmActions);
+
+  card.append(mainPanel, confirmPanel);
   shadow.append(style, card);
 
   let pending: Pending | null = null;
@@ -378,7 +486,17 @@ export function mountApprovalUi(): ApprovalUi {
     attach();
     applyTheme();
 
-    title.innerHTML = `Allow <span class="tool-name">${req.name}</span> to run?`;
+    mainPanel.style.display = "flex";
+    confirmPanel.style.display = "none";
+
+    if (req.name === "mcp_call" && req.args?.server && req.args?.tool) {
+      badge.textContent = `mcp: ${String(req.args.server)}`;
+      title.innerHTML = `Allow <span class="tool-name">${String(req.args.tool)}</span> to run?`;
+    } else {
+      badge.textContent = "Permission";
+      title.innerHTML = `Allow <span class="tool-name">${req.name}</span> to run?`;
+    }
+
     preview.textContent = formatPreview(req.name, req.args ?? {});
     fullArgs.textContent = JSON.stringify(req.args ?? {}, null, 2);
     details.open = false;
@@ -411,7 +529,59 @@ export function mountApprovalUi(): ApprovalUi {
   }
 
   onceBtn.addEventListener("click", () => settle({ action: "once" }));
-  alwaysBtn.addEventListener("click", () => settle({ action: "always" }));
+
+  alwaysBtn.addEventListener("click", () => {
+    const scopes =
+      pending?.scopes && pending.scopes.length > 0
+        ? pending.scopes
+        : [{ id: pending?.name ?? "", label: `All ${pending?.name ?? "tool"} calls`, isDefault: true }];
+
+    scopeList.replaceChildren();
+    for (let i = 0; i < scopes.length; i++) {
+      const s = scopes[i]!;
+      const labelEl = document.createElement("label");
+      labelEl.className = "scope-item";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "scope-option";
+      radio.value = s.id;
+      if (s.isDefault || i === 0) radio.checked = true;
+
+      const content = document.createElement("div");
+      content.className = "scope-content";
+
+      const lbl = document.createElement("span");
+      lbl.className = "scope-label";
+      lbl.textContent = s.label;
+
+      content.append(lbl);
+      if (s.description) {
+        const desc = document.createElement("span");
+        desc.className = "scope-desc";
+        desc.textContent = s.description;
+        content.append(desc);
+      }
+
+      labelEl.append(radio, content);
+      scopeList.append(labelEl);
+    }
+
+    mainPanel.style.display = "none";
+    confirmPanel.style.display = "flex";
+  });
+
+  backBtn.addEventListener("click", () => {
+    confirmPanel.style.display = "none";
+    mainPanel.style.display = "flex";
+  });
+
+  confirmAlwaysBtn.addEventListener("click", () => {
+    const selected =
+      scopeList.querySelector<HTMLInputElement>("input[name='scope-option']:checked")?.value;
+    settle({ action: "always", scope: selected });
+  });
+
   rejectBtn.addEventListener("click", () => {
     const reason = feedbackInput.value.trim();
     settle({ action: "reject", ...(reason ? { reason } : {}) });
@@ -421,6 +591,11 @@ export function mountApprovalUi(): ApprovalUi {
     if (!pending) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      if (confirmPanel.style.display === "flex") {
+        confirmPanel.style.display = "none";
+        mainPanel.style.display = "flex";
+        return;
+      }
       const reason = feedbackInput.value.trim();
       settle({ action: "reject", ...(reason ? { reason } : {}) });
     }
@@ -428,9 +603,13 @@ export function mountApprovalUi(): ApprovalUi {
   document.addEventListener("keydown", onKeydown);
 
   return {
-    request(name: string, params: Record<string, unknown>): Promise<ApprovalAnswer> {
+    request(
+      name: string,
+      params: Record<string, unknown>,
+      scopes?: PermissionScope[],
+    ): Promise<ApprovalAnswer> {
       return new Promise<ApprovalAnswer>((resolve) => {
-        const req: Pending = { name, args: params, resolve };
+        const req: Pending = { name, args: params, scopes, resolve };
         if (pending) queue.push(req);
         else show(req);
       });

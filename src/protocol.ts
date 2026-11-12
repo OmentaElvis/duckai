@@ -31,6 +31,14 @@ export type Permission = "allow" | "ask" | "deny";
 /** Where an effective permission came from (for display). */
 export type PermissionSource = "session" | "policy" | "default";
 
+/** Scope level for granular permissions (e.g. specific tool, specific file, command binary). */
+export interface PermissionScope {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
 /** Tool info plus its effective permission, as shown in the management UI. */
 export interface ManagedTool extends ToolInfo {
   permission: Permission;

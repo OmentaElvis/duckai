@@ -1,13 +1,59 @@
-import type { Tool } from "../harness";
+import type { PermissionScope, Tool } from "../harness";
 import { resolveUserPath } from "./fs";
 
 const MAX_OUTPUT_BYTES = 32 * 1024; // 32 KB cap for output to keep tokens manageable
+
+function parseCommandBinaries(command: string): string[] {
+  // Split on chain/pipeline operators: &&, ||, ;, |, &
+  const parts = command.split(/&&|\|\||[;|]/);
+  const binaries = new Set<string>();
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const tokens = trimmed.split(/\s+/).filter((t) => !t.includes("="));
+    if (tokens.length > 0) {
+      const bin = tokens[0]!.replace(/^.*[/\\]/, "");
+      if (bin) binaries.add(bin);
+    }
+  }
+  return [...binaries];
+}
 
 export const runCommandTool: Tool = {
   name: "run_command",
   permission: "ask",
   description:
     "Execute a shell command on the local machine. Runs inside bash with timeout enforcement and captured stdout/stderr.",
+  permissionScopes: (args) => {
+    const cmd = typeof args.command === "string" ? args.command.trim() : "";
+    if (!cmd) {
+      return [{ id: "run_command", label: "All shell commands", isDefault: true }];
+    }
+    const bins = parseCommandBinaries(cmd);
+    const shortCmd = cmd.length > 45 ? `${cmd.slice(0, 45)}…` : cmd;
+    const scopes: PermissionScope[] = [
+      {
+        id: `cmd:${cmd}`,
+        label: `Exact command: "${shortCmd}"`,
+        description: "Only auto-approve this identical command line",
+        isDefault: true,
+      },
+    ];
+    if (bins.length === 1) {
+      const bin = bins[0]!;
+      scopes.push({
+        id: `bin:${bin}:*`,
+        label: `Any "${bin}" command`,
+        description: `Auto-approve any shell command invoking "${bin}"`,
+      });
+    }
+    scopes.push({
+      id: "run_command",
+      label: "All shell commands",
+      description: "Auto-approve every command without prompting",
+    });
+    return scopes;
+  },
   parameters: {
     type: "object",
     properties: {

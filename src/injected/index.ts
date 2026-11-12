@@ -3,7 +3,7 @@
  * any application script. Exposes `window.__duckai_ext` for debugging in
  * devtools and announces readiness to the Bun host.
  */
-import type { ManagedTool, Permission, ToolManifestEntry } from "../protocol";
+import type { ManagedTool, Permission, PermissionScope, ToolManifestEntry } from "../protocol";
 import type { HealthReport, HealthStatus } from "../health-report";
 import { callHarness, callHarnessSafe } from "./bridge";
 import { installFetchHook } from "./fetch-hook";
@@ -123,22 +123,25 @@ if (!window.__duckai_ext) {
       }
     }
 
-    const decision = (await callHarness("authorize", { name })) as {
+    const decision = (await callHarness("authorize", { name, args })) as {
       level: Permission;
       source: string;
+      scopes?: PermissionScope[];
     };
     if (decision.level === "deny") {
       throw new Error(`Permission denied for tool "${name}".`);
     }
     if (decision.level === "ask") {
-      const answer = await approvalUi.request(name, args);
+      const answer = await approvalUi.request(name, args, decision.scopes);
       if (answer.action === "reject") {
         const reasonMsg = answer.reason
           ? ` The user provided this feedback/alternative: "${answer.reason}". Follow the user's instructions.`
           : ` Do not retry without asking.`;
         throw new Error(`The user rejected the "${name}" tool call.${reasonMsg}`);
       }
-      if (answer.action === "always") await callHarness("grantSession", { name });
+      if (answer.action === "always") {
+        await callHarness("grantSession", { name, scope: answer.scope });
+      }
     }
     return callHarness("call", { name, args });
   };

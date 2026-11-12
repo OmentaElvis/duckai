@@ -21,11 +21,18 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
 } from "./mcp/client";
-import type { ManagedTool, Permission, PermissionSource, ToolInfo, ToolManifestEntry } from "./protocol";
+import type {
+  ManagedTool,
+  Permission,
+  PermissionScope,
+  PermissionSource,
+  ToolInfo,
+  ToolManifestEntry,
+} from "./protocol";
 import { maybeOffload } from "./tools/results";
 import { coreTools } from "./tools";
 
-export type { ToolManifestEntry };
+export type { ToolManifestEntry, PermissionScope };
 
 export interface Tool extends ToolManifestEntry {
   execute: (args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -35,6 +42,11 @@ export interface Tool extends ToolManifestEntry {
    * should declare `"allow"`.
    */
   permission?: Permission;
+  /**
+   * Domain-specific permission scopes for this call's arguments.
+   * If omitted, defaults to a single scope matching the tool name.
+   */
+  permissionScopes?: (args: Record<string, unknown>) => PermissionScope[];
 }
 
 const tools = new Map<string, Tool>();
@@ -107,21 +119,48 @@ function isToolEnabled(name: string): boolean {
   return !readSettings().disabledTools.includes(name);
 }
 
-/** Effective permission for a tool, resolving session grant → policy → default. */
-export function resolvePermission(name: string): {
+export interface AuthorizationResult {
   level: Permission;
   source: PermissionSource;
-} {
-  if (sessionGrants.has(name)) return { level: "allow", source: "session" };
-  const policy = readSettings().toolPermissions[name];
-  if (policy) return { level: policy, source: "policy" };
-  return { level: tools.get(name)?.permission ?? "ask", source: "default" };
+  scopes: PermissionScope[];
 }
 
-/** Grant "always allow" for a tool for the remainder of this session (in-memory). */
-export function grantSession(name: string): void {
-  if (!tools.has(name)) throw new Error(`unknown tool: ${name}`);
-  sessionGrants.add(name);
+/** Effective permission for a tool, resolving session grant → policy → default across scopes. */
+export function resolvePermission(
+  name: string,
+  args?: Record<string, unknown>,
+): AuthorizationResult {
+  const tool = tools.get(name);
+  const toolScopes = tool?.permissionScopes?.(args ?? {}) ?? [
+    { id: name, label: `All ${name} calls`, isDefault: true },
+  ];
+
+  // 1. Session grants (from most specific scope to tool name)
+  for (const s of toolScopes) {
+    if (sessionGrants.has(s.id)) return { level: "allow", source: "session", scopes: toolScopes };
+  }
+  if (sessionGrants.has(name)) return { level: "allow", source: "session", scopes: toolScopes };
+
+  // 2. Persisted policy settings (from most specific scope to tool name)
+  const settings = readSettings().toolPermissions;
+  for (const s of toolScopes) {
+    const policy = settings[s.id];
+    if (policy) return { level: policy, source: "policy", scopes: toolScopes };
+  }
+  const toolPolicy = settings[name];
+  if (toolPolicy) return { level: toolPolicy, source: "policy", scopes: toolScopes };
+
+  // 3. Tool default permission
+  return {
+    level: tool?.permission ?? "ask",
+    source: "default",
+    scopes: toolScopes,
+  };
+}
+
+/** Grant "always allow" for a scope or tool for the remainder of this session (in-memory). */
+export function grantSession(target: string): void {
+  sessionGrants.add(target);
 }
 
 /** Explicitly set a tool's persisted (global) permission. */
@@ -297,14 +336,15 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         return { ok: true, result: setToolEnabled(p.name, p.enabled !== false) };
       }
       case "authorize": {
-        const p = params as { name?: string };
+        const p = params as { name?: string; args?: Record<string, unknown> };
         if (!p?.name) return { ok: false, error: "missing tool name" };
-        return { ok: true, result: resolvePermission(p.name) };
+        return { ok: true, result: resolvePermission(p.name, p.args) };
       }
       case "grantSession": {
-        const p = params as { name?: string };
-        if (!p?.name) return { ok: false, error: "missing tool name" };
-        grantSession(p.name);
+        const p = params as { name?: string; scope?: string };
+        const target = p?.scope || p?.name;
+        if (!target) return { ok: false, error: "missing tool name or scope" };
+        grantSession(target);
         return { ok: true, result: listToolStatus() };
       }
       case "setPermission": {

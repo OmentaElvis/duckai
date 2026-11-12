@@ -272,6 +272,31 @@ export const mcpCallTool: Tool = {
   name: "mcp_call",
   permission: "ask",
   description: "Call an MCP server tool.",
+  permissionScopes: (args) => {
+    const server = typeof args.server === "string" ? args.server.trim().toLowerCase() : "";
+    const tool = typeof args.tool === "string" ? args.tool.trim() : "";
+    if (!server || !tool) {
+      return [{ id: "mcp_call", label: "All MCP calls across all servers", isDefault: true }];
+    }
+    return [
+      {
+        id: `mcp:${server}:${tool}`,
+        label: `This tool only (${tool} on ${server})`,
+        description: `Only auto-approve "${tool}" on server "${server}"`,
+        isDefault: true,
+      },
+      {
+        id: `mcp:${server}:*`,
+        label: `All tools on server "${server}"`,
+        description: `Auto-approve any tool called on the "${server}" server`,
+      },
+      {
+        id: "mcp_call",
+        label: "All MCP tools across all servers",
+        description: "Auto-approve every tool from every MCP server",
+      },
+    ];
+  },
   parameters: {
     type: "object",
     properties: {

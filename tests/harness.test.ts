@@ -76,11 +76,11 @@ describe("harness bridge", () => {
         }
       ).result;
 
-    expect(await auth("echo")).toEqual({ level: "allow", source: "default" });
-    expect(await auth("todo_add")).toEqual({ level: "ask", source: "default" });
+    expect(await auth("echo")).toMatchObject({ level: "allow", source: "default" });
+    expect(await auth("todo_add")).toMatchObject({ level: "ask", source: "default" });
 
     await handleHarnessCall({ method: "grantSession", params: { name: "todo_add" } });
-    expect(await auth("todo_add")).toEqual({ level: "allow", source: "session" });
+    expect(await auth("todo_add")).toMatchObject({ level: "allow", source: "session" });
     // A session grant must not be persisted.
     const saved = existsSync(settingsPath)
       ? (JSON.parse(readFileSync(settingsPath, "utf8")) as {
@@ -90,7 +90,7 @@ describe("harness bridge", () => {
     expect(saved.toolPermissions?.todo_add).toBeUndefined();
 
     await handleHarnessCall({ method: "setPermission", params: { name: "echo", level: "deny" } });
-    expect(await auth("echo")).toEqual({ level: "deny", source: "policy" });
+    expect(await auth("echo")).toMatchObject({ level: "deny", source: "policy" });
   });
 
   test("setToolEnabled preserves explicit permissions", async () => {

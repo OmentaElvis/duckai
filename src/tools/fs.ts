@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import type { Tool } from "../harness";
+import type { PermissionScope, Tool } from "../harness";
 
 export function resolveUserPath(p: string): string {
   if (p === "~") return homedir();
@@ -81,11 +81,42 @@ export const readFileTool: Tool = {
   },
 };
 
+function filePermissionScopes(toolName: string, actionLabel: string, args: Record<string, unknown>): PermissionScope[] {
+  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  if (!rawPath) {
+    return [{ id: toolName, label: `All ${actionLabel} operations`, isDefault: true }];
+  }
+  const fullPath = resolveUserPath(rawPath);
+  const fileName = fullPath.split("/").pop() || rawPath;
+  const parentDir = dirname(fullPath);
+  const dirName = parentDir.split("/").pop() || parentDir;
+
+  return [
+    {
+      id: `file:${fullPath}`,
+      label: `This file only (${fileName})`,
+      description: `Only auto-approve ${actionLabel} for "${fullPath}"`,
+      isDefault: true,
+    },
+    {
+      id: `dir:${parentDir}:*`,
+      label: `Any file in "${dirName}/"`,
+      description: `Auto-approve ${actionLabel} for any file in ${parentDir}`,
+    },
+    {
+      id: toolName,
+      label: `All ${actionLabel} operations`,
+      description: `Auto-approve ${actionLabel} for any file without prompting`,
+    },
+  ];
+}
+
 export const writeFileTool: Tool = {
   name: "write_file",
   permission: "ask",
   description:
     "Write content to a file. Creates parent directories automatically. Can overwrite or append.",
+  permissionScopes: (args) => filePermissionScopes("write_file", "file write", args),
   parameters: {
     type: "object",
     properties: {
@@ -128,6 +159,7 @@ export const editFileTool: Tool = {
   permission: "ask",
   description:
     "Make precise find-and-replace edits to a file. Replaces target occurrences with the replacement string.",
+  permissionScopes: (args) => filePermissionScopes("edit_file", "file edit", args),
   parameters: {
     type: "object",
     properties: {
@@ -424,6 +456,7 @@ export const deleteFileTool: Tool = {
   permission: "ask",
   description:
     "Safely delete a file or directory. By default moves the item to the OS trash; if unsupported or trash=false, deletes it.",
+  permissionScopes: (args) => filePermissionScopes("delete_file", "file delete", args),
   parameters: {
     type: "object",
     properties: {
