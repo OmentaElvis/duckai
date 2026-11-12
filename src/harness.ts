@@ -217,6 +217,23 @@ export async function executeTool(
   }
 }
 
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  cachedVersion?: string;
+  upstreamVersion?: string;
+  updatedAt?: number;
+}
+
+let availableUpdate: UpdateInfo = { hasUpdate: false };
+
+export function setAvailableUpdate(info: UpdateInfo): void {
+  availableUpdate = info;
+}
+
+export function getAvailableUpdate(): UpdateInfo {
+  return availableUpdate;
+}
+
 /** Wire-protocol handler. Never throws. */
 export async function handleHarnessCall(req: unknown): Promise<unknown> {
   try {
@@ -226,7 +243,9 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         return { ok: true, result: { pong: Date.now() } };
       case "pageReady":
         log.child("bridge").info("page ready", params);
-        return { ok: true, result: { version: "0.1.0" } };
+        return { ok: true, result: { version: "0.1.0", update: getAvailableUpdate() } };
+      case "checkUpdate":
+        return { ok: true, result: getAvailableUpdate() };
       case "selfCheck": {
         const p = params as { telemetryBlocked?: boolean; bridgeOk?: boolean; error?: string };
         const status = p.telemetryBlocked && p.bridgeOk ? "OK" : "FAIL";

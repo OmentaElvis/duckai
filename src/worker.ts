@@ -9,8 +9,9 @@
  */
 import { dlopen, FFIType, JSCallback } from "bun:ffi";
 import { SizeHint, Webview } from "webview-bun";
+import { readCachedHtml } from "./cache";
 import { INJECT_SCRIPT } from "./generated/inject-script";
-import { applyWindowTheme, scheduleWindowNudge } from "./native";
+import { applyWindowTheme, loadHtmlWithBase, scheduleWindowNudge } from "./native";
 import { log } from "./logging/host";
 import {
   IPC_IDLE,
@@ -187,7 +188,22 @@ try {
 webview.init(INJECT_SCRIPT);
 
 const target = process.env.DUCKAI_URL ?? "https://duck.ai";
+const noCache = process.env.DUCKAI_NO_CACHE === "1";
 postMessage({ type: "init", buffer });
 
-webview.navigate(target);
+let loadedFromCache = false;
+if (!noCache && target === "https://duck.ai") {
+  const cached = readCachedHtml();
+  if (cached) {
+    loadedFromCache = loadHtmlWithBase(webview, cached.html, "https://duck.ai/");
+    if (loadedFromCache) {
+      log.info(`loaded from offline cache: ${cached.versionTag} (${cached.versionSha.slice(0, 8)})`);
+    }
+  }
+}
+
+if (!loadedFromCache) {
+  webview.navigate(target);
+}
+
 webview.run();

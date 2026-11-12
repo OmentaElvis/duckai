@@ -11,6 +11,7 @@ import { noteEvent, noteFeVersion, runHealthChecks, type HealthOptions } from ".
 import { mountApprovalUi, type ApprovalAnswer } from "./approval-ui";
 import { mountHealthUi, type HealthUi } from "./health-ui";
 import { mountToolsUi, type ToolsUi } from "./tools-ui";
+import { mountUpdateBanner } from "./update-banner";
 import { mountSettingsEntry } from "./settings-menu";
 import { log, type LogEntry } from "./log";
 import { onSSEEvent } from "./sse";
@@ -296,9 +297,38 @@ if (!window.__duckai_ext) {
   ext.ready = true;
   log.info(`extension ready on ${location.host}`);
 
+  const updateBanner = mountUpdateBanner();
+  const checkAndShowUpdate = (info: unknown) => {
+    const u = (info && typeof info === "object" ? info : {}) as {
+      hasUpdate?: boolean;
+      cachedVersion?: string;
+      upstreamVersion?: string;
+    };
+    if (u.hasUpdate) {
+      updateBanner.show({
+        cachedVersion: u.cachedVersion,
+        upstreamVersion: u.upstreamVersion,
+      });
+    }
+  };
+
   callHarness("pageReady", { href: location.href, ua: navigator.userAgent })
-    .then((r) => log.info("host acknowledged pageReady", r))
+    .then((r) => {
+      log.info("host acknowledged pageReady", r);
+      const res = r as { update?: unknown } | undefined;
+      if (res?.update) checkAndShowUpdate(res.update);
+    })
     .catch((err) => log.warn("host unreachable", String(err)));
+
+  // Secondary check once host background update fetch completes
+  setTimeout(async () => {
+    try {
+      const res = await callHarness("checkUpdate");
+      checkAndShowUpdate(res);
+    } catch {
+      /* ignore */
+    }
+  }, 4000);
 
   // Load the custom-tool manifest; tools stay disabled until it arrives.
   void (async () => {

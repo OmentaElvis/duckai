@@ -2,7 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleHarnessCall, listManifest, listTools } from "../src/harness";
+import {
+  getAvailableUpdate,
+  handleHarnessCall,
+  listManifest,
+  listTools,
+  setAvailableUpdate,
+} from "../src/harness";
 
 // Isolate persisted tool settings so tests never touch ~/.duckai/settings.json.
 let settingsPath = "";
@@ -119,5 +125,36 @@ describe("harness bridge", () => {
     const b = (await handleHarnessCall({ method: "wat" })) as { ok: boolean; error: string };
     expect(b.ok).toBe(false);
     expect(b.error).toContain("unknown method");
+  });
+
+  test("version update status query and notification", async () => {
+    setAvailableUpdate({
+      hasUpdate: true,
+      cachedVersion: "serp_v1",
+      upstreamVersion: "serp_v2",
+    });
+
+    const res = (await handleHarnessCall({ method: "checkUpdate" })) as {
+      ok: boolean;
+      result: { hasUpdate: boolean; cachedVersion?: string; upstreamVersion?: string };
+    };
+    expect(res.ok).toBe(true);
+    expect(res.result.hasUpdate).toBe(true);
+    expect(res.result.cachedVersion).toBe("serp_v1");
+    expect(res.result.upstreamVersion).toBe("serp_v2");
+
+    const pageReadyRes = (await handleHarnessCall({
+      method: "pageReady",
+      params: { href: "https://duck.ai" },
+    })) as {
+      ok: boolean;
+      result: { update?: { hasUpdate: boolean } };
+    };
+    expect(pageReadyRes.ok).toBe(true);
+    expect(pageReadyRes.result.update?.hasUpdate).toBe(true);
+
+    // Reset
+    setAvailableUpdate({ hasUpdate: false });
+    expect(getAvailableUpdate().hasUpdate).toBe(false);
   });
 });

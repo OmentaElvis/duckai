@@ -146,6 +146,33 @@ export function scheduleWindowNudge(
   }
 }
 
+/**
+ * Load HTML directly into the WebKit view with a specific base URI,
+ * retaining domain origin (IndexedDB, localStorage, relative assets).
+ */
+export function loadHtmlWithBase(
+  webview: NativeWindow,
+  html: string,
+  baseUri: string = "https://duck.ai/",
+): boolean {
+  if (process.platform !== "linux") return false;
+  const win = webview.unsafeWindowHandle as unknown as number;
+  if (!win) return false;
+
+  try {
+    const gtk = loadGtk();
+    const child = gtk.symbols.gtk_window_get_child(win as never) as unknown as number;
+    if (!child) return false;
+
+    const webkit = loadWebKit();
+    webkit.symbols.webkit_web_view_load_html(child as never, cstr(html), cstr(baseUri));
+    return true;
+  } catch (err) {
+    log.child("native").warn("loadHtmlWithBase failed", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 function loadGtk() {
   return dlopen("libgtk-4.so.1", {
     gtk_settings_get_default: { args: [], returns: FFIType.ptr },
@@ -166,7 +193,25 @@ function loadGtk() {
     },
     gtk_widget_get_width: { args: [FFIType.ptr], returns: FFIType.i32 },
     gtk_widget_get_height: { args: [FFIType.ptr], returns: FFIType.i32 },
+    gtk_window_get_child: { args: [FFIType.ptr], returns: FFIType.ptr },
   });
+}
+
+function loadWebKit() {
+  const tryLibs = ["libwebkitgtk-6.0.so.4", "libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"];
+  for (const name of tryLibs) {
+    try {
+      return dlopen(name, {
+        webkit_web_view_load_html: {
+          args: [FFIType.ptr, FFIType.cstring, FFIType.cstring],
+          returns: FFIType.void,
+        },
+      });
+    } catch {
+      // try next
+    }
+  }
+  throw new Error("WebKitGTK library not found");
 }
 
 function loadGlib() {

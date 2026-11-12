@@ -245,6 +245,11 @@ function probeDrift(): HealthCheck {
 function probeFeVersion(): HealthCheck {
   const id = "fe-version";
   const label = "Duck.ai front-end build";
+  if (!feVersion && typeof document !== "undefined" && document.documentElement) {
+    const tag = document.documentElement.getAttribute("data-version-tag");
+    const sha = document.documentElement.getAttribute("data-version-sha");
+    if (tag) feVersion = sha ? `${tag}-${sha}` : tag;
+  }
   if (!feVersion) return skip(id, label, "not observed yet");
   const KEY = "duckai-ext:health:fe";
   let baseline: string | null = null;
@@ -261,9 +266,15 @@ function probeFeVersion(): HealthCheck {
     }
     return ok(id, label, `baseline ${feVersion}`);
   }
-  return baseline === feVersion
-    ? ok(id, label, feVersion)
-    : warn(id, label, `changed ${baseline} → ${feVersion}`);
+  if (baseline !== feVersion) {
+    try {
+      localStorage.setItem(KEY, feVersion);
+    } catch {
+      /* ignore */
+    }
+    return warn(id, label, `changed ${baseline} → ${feVersion}`);
+  }
+  return ok(id, label, feVersion);
 }
 
 // --- runner ----------------------------------------------------------------

@@ -5,7 +5,8 @@
  * loop). This side stays free to execute harness tools — including async ones —
  * and answers the worker's blocking IPC requests over a SharedArrayBuffer.
  */
-import { handleHarnessCall } from "./harness";
+import { fetchUpstream, readCachedHtml, writeCachedHtml } from "./cache";
+import { handleHarnessCall, setAvailableUpdate } from "./harness";
 import { log } from "./logging/host";
 import {
   IPC_REQUEST,
@@ -38,6 +39,42 @@ if (process.platform === "linux") {
 log.info("starting webview worker");
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url));
+
+// Asynchronous background cache populator & update checker
+void (async () => {
+  if (process.env.DUCKAI_NO_CACHE === "1") return;
+  try {
+    const cached = readCachedHtml();
+    const upstream = await fetchUpstream();
+    if (!upstream) {
+      log.child("cache").debug("upstream offline or unreachable");
+      return;
+    }
+
+    if (!cached) {
+      writeCachedHtml(upstream.html);
+      log.child("cache").info(`initial cache populated: ${upstream.versionTag ?? "dev"}`);
+      return;
+    }
+
+    const cachedTag = cached.versionTag;
+    const upstreamTag = upstream.versionTag;
+    if (upstreamTag && cachedTag && upstreamTag !== cachedTag) {
+      log.child("cache").info(`upstream update detected: ${cachedTag} → ${upstreamTag}`);
+      writeCachedHtml(upstream.html);
+      setAvailableUpdate({
+        hasUpdate: true,
+        cachedVersion: cachedTag,
+        upstreamVersion: upstreamTag,
+        updatedAt: Date.now(),
+      });
+    } else {
+      log.child("cache").debug(`cache is up to date: ${cachedTag}`);
+    }
+  } catch (err) {
+    log.child("cache").debug("background update check error", err);
+  }
+})();
 
 let views: IpcViews | null = null;
 
