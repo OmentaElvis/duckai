@@ -31,6 +31,7 @@ import type {
 } from "./protocol";
 import { maybeOffload } from "./tools/results";
 import { coreTools } from "./tools";
+import { VERSION } from "./version";
 
 export type { ToolManifestEntry, PermissionScope };
 
@@ -282,7 +283,7 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         return { ok: true, result: { pong: Date.now() } };
       case "pageReady":
         log.child("bridge").info("page ready", params);
-        return { ok: true, result: { version: "0.1.0", update: getAvailableUpdate() } };
+        return { ok: true, result: { version: VERSION, update: getAvailableUpdate() } };
       case "checkUpdate":
         return { ok: true, result: getAvailableUpdate() };
       case "selfCheck": {

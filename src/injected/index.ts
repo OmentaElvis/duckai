@@ -5,6 +5,7 @@
  */
 import type { ManagedTool, Permission, PermissionScope, ToolManifestEntry } from "../protocol";
 import type { HealthReport, HealthStatus } from "../health-report";
+import { VERSION } from "../version";
 import { callHarness, callHarnessSafe } from "./bridge";
 import { installFetchHook } from "./fetch-hook";
 import { noteEvent, noteFeVersion, runHealthChecks, type HealthOptions } from "./health";
@@ -57,7 +58,7 @@ if (!window.__duckai_ext) {
   const sseStats: ExtGlobal["sse"] = { events: 0, last: null };
 
   const ext: ExtGlobal = {
-    version: "0.1.0",
+    version: VERSION,
     ready: false,
     log,
     callHarness,

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "../logging/host";
+import { VERSION } from "../version";
 
 // Minimal MCP client (stdio, tools-only) + lazy manager.
 // Only one stdio process per configured server, spawned on first use
@@ -261,7 +262,7 @@ class McpClient {
     await this.request("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "duckai", version: "0.1.0" },
+      clientInfo: { name: "duckai", version: VERSION },
     });
     this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
