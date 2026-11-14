@@ -101,15 +101,18 @@ if (!window.__duckai_ext) {
     sseStats.events++;
     sseStats.last = ev.json ?? ev.special ?? ev.data;
     noteEvent(ev, isCustomTool);
-    // Assistant text deltas are high-volume and carry no structural signal.
-    // Logging them floods both the devtools console and the host terminal, so
-    // only structural events (specials / non-assistant roles) are emitted.
-    const isDelta = ev.json?.role === "assistant" && ev.json.message !== "";
-    if (!isDelta) {
+    // Assistant text deltas and encrypted reasoning blocks are high-volume and carry
+    // no structural signal. Logging them floods both devtools and the host terminal.
+    const isIgnored =
+      (ev.json?.role === "assistant" && ev.json.message !== "") ||
+      ev.json?.role === "reasoning";
+    if (!isIgnored) {
       const kind = ev.special ? `[${ev.special}]` : ((ev.json?.role as string) ?? "unknown");
       log.debug(`sse event #${sseStats.events}: ${kind}`, ev.json ?? ev.data);
     }
-    callHarnessSafe("sseEvent", { json: ev.json, special: ev.special });
+    if (ev.json?.role !== "reasoning") {
+      callHarnessSafe("sseEvent", { json: ev.json, special: ev.special });
+    }
   };
 
   // Human-in-the-loop tool approval: tools whose effective permission is

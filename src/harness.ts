@@ -363,9 +363,9 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
       }
       case "sseEvent": {
         const p = params as { json?: Record<string, unknown> | null; special?: string | null };
-        // Structural events only — deltas are too chatty for stdout.
+        // Structural events only — deltas and encrypted reasoning blocks are too chatty/noisy for stdout.
         const role = p.json?.role;
-        if (p.special || (role && role !== "assistant")) {
+        if (p.special || (role && role !== "assistant" && role !== "reasoning")) {
           log
             .child("sse")
             .info(p.special ? `[${p.special}]` : String(role), p.special ? undefined : p.json);

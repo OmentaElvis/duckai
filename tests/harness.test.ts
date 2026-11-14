@@ -10,6 +10,7 @@ import {
   setAvailableUpdate,
   setReloadHandler,
 } from "../src/harness";
+import { log } from "../src/logging/host";
 
 // Isolate persisted tool settings so tests never touch ~/.duckai/settings.json.
 let settingsPath = "";
@@ -240,5 +241,32 @@ describe("harness bridge", () => {
     };
     expect(missing.ok).toBe(false);
     expect(missing.error).toContain("not ready");
+  });
+
+  test("sseEvent suppresses logging for assistant and reasoning roles", async () => {
+    const logged: string[] = [];
+    const unsubscribe = log.onEntry((e) => {
+      if (e.scope === "duckai:sse") logged.push(e.msg);
+    });
+
+    try {
+      await handleHarnessCall({
+        method: "sseEvent",
+        params: { json: { role: "reasoning", message: "encrypted-noise" } },
+      });
+      await handleHarnessCall({
+        method: "sseEvent",
+        params: { json: { role: "assistant", message: "hi" } },
+      });
+      expect(logged).toEqual([]);
+
+      await handleHarnessCall({
+        method: "sseEvent",
+        params: { json: { role: "tool-invocation", state: "call" } },
+      });
+      expect(logged).toEqual(["tool-invocation"]);
+    } finally {
+      unsubscribe();
+    }
   });
 });
