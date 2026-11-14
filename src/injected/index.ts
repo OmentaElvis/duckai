@@ -28,6 +28,7 @@ import { registerBuiltinViews } from "./views";
 import { pruneHistory } from "./tool-history";
 import { savedConversationIds } from "./chat-store";
 import { applyCustomizations } from "./customizations";
+import { isHarnessEnabled, mountComposerToggle, toggleHarness } from "./composer-toggle";
 
 type ExtGlobal = {
   version: string;
@@ -51,6 +52,8 @@ type ExtGlobal = {
     health: typeof runHealthChecks;
     approval?: (name: string, args: Record<string, unknown>) => Promise<ApprovalAnswer>;
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    isHarnessEnabled?: () => boolean;
+    toggleHarness?: () => boolean;
   };
 };
 
@@ -164,12 +167,15 @@ if (!window.__duckai_ext) {
     return callHarness("call", { name, args });
   };
   ext.debug.callTool = authorizeAndCall;
+  ext.debug.isHarnessEnabled = isHarnessEnabled;
+  ext.debug.toggleHarness = toggleHarness;
 
   installFetchHook({
     onSSEEvent: onEvent,
     getManifest: () => ext.tools,
     callTool: (name, args) => authorizeAndCall(name, args),
     onChat: (info) => noteFeVersion(info.feVersion),
+    isHarnessEnabled,
   });
 
   // Plugin health check. Runs once after the manifest loads (deep, including a
@@ -254,6 +260,7 @@ if (!window.__duckai_ext) {
   });
 
   applyCustomizations();
+  mountComposerToggle();
 
   // Restore widget rows for historical tool calls after a reload / when a
   // saved conversation is (re)opened. Debounced: the observer fires a lot.

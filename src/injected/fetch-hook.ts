@@ -33,6 +33,8 @@ export interface FetchHookOptions {
   callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   /** Called for each duck.ai chat request with headers tracked for drift. */
   onChat?: (info: { feVersion?: string }) => void;
+  /** Whether the DuckAI harness is active for this chat session (defaults to true). */
+  isHarnessEnabled?: () => boolean;
 }
 
 function urlOf(input: RequestInfo | URL): string {
@@ -123,15 +125,21 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
       : null;
     if (!rawMessages) return origFetch(input, init);
 
-    log.info(
-      `chat request → model=${String(parsed.model)} messages=${rawMessages.length} tools=${(opts.getManifest?.() ?? []).length} greeting=${String(parsed.canShowGreeting)}`,
-    );
+    const harnessActive = opts.isHarnessEnabled ? opts.isHarnessEnabled() : true;
     const manifest = opts.getManifest?.() ?? [];
-    const toolsEnabled = manifest.length > 0 && typeof opts.callTool === "function";
+    const toolsEnabled = harnessActive && manifest.length > 0 && typeof opts.callTool === "function";
+
+    log.info(
+      `chat request → model=${String(parsed.model)} messages=${rawMessages.length} tools=${manifest.length} harness=${harnessActive ? "on" : "off"} greeting=${String(parsed.canShowGreeting)}`,
+    );
 
     if (!toolsEnabled) {
       const res = await origFetch(input, init);
-      if (isChat) log.info(`chat response ← status=${res.status} streaming (observe)`);
+      if (isChat) {
+        log.info(
+          `chat response ← status=${res.status} streaming (observe) [harness=${harnessActive ? "on" : "off"}]`,
+        );
+      }
       return observeResponse(res);
     }
 
