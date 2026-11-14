@@ -340,7 +340,10 @@ if (!window.__duckai_ext) {
   const pendingReload = isTopFrame ? consumeReloadMarker() : null;
   if (pendingReload) {
     reloading = true;
-    reloadOverlay.show({ detail: pendingReload.upstreamVersion });
+    reloadOverlay.show({
+      label: pendingReload.label,
+      detail: pendingReload.upstreamVersion,
+    });
     const hideWhenReady = () => window.setTimeout(finishReload, 350);
     if (document.readyState === "complete") hideWhenReady();
     else window.addEventListener("load", hideWhenReady, { once: true });
@@ -348,30 +351,54 @@ if (!window.__duckai_ext) {
     window.setTimeout(finishReload, 20_000);
   }
 
-  const startReload = async (): Promise<void> => {
+  const triggerReload = async (opts: { label?: string; detail?: string } = {}): Promise<void> => {
     if (reloading) return;
     reloading = true;
-    const marker = markReloading(currentUpdate?.upstreamVersion);
-    updateBanner.setReloading(true);
-    reloadOverlay.show({ detail: marker.upstreamVersion });
+    const label = opts.label ?? (currentUpdate?.upstreamVersion ? "Updating Duck.ai…" : "Reloading Duck.ai…");
+    const detail = opts.detail ?? currentUpdate?.upstreamVersion;
+    const marker = markReloading(detail, location.href, label);
+    if (updateShown) updateBanner.setReloading(true);
+    reloadOverlay.show({ label, detail: marker.upstreamVersion });
     try {
-      await callHarness("reloadUpdate");
+      await callHarness("reload");
       // The worker replaces the document asynchronously. If that never happens,
       // recover instead of leaving the window covered by the overlay.
       window.setTimeout(() => {
         if (!reloading) return;
         log.warn("webview reload did not start; falling back to location.reload()");
         finishReload();
-        updateBanner.setReloading(false);
+        if (updateShown) updateBanner.setReloading(false);
         location.reload();
       }, 15_000);
     } catch (err) {
-      log.warn("reloadUpdate failed", String(err));
+      log.warn("reload failed", String(err));
       finishReload();
-      updateBanner.setReloading(false);
+      if (updateShown) updateBanner.setReloading(false);
       location.reload();
     }
   };
+
+  // Keyboard reload shortcuts (F5, Ctrl+R, Cmd+R, Ctrl+Shift+R, Ctrl+F5)
+  window.addEventListener(
+    "keydown",
+    (e: KeyboardEvent) => {
+      const isF5 = e.key === "F5";
+      const isCtrlR = (e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R");
+      if (isF5 || isCtrlR) {
+        e.preventDefault();
+        e.stopPropagation();
+        void triggerReload({ label: "Reloading Duck.ai…" });
+      }
+    },
+    true,
+  );
+
+  // Mark reload if the page unloads unexpectedly or via other navigation
+  window.addEventListener("beforeunload", () => {
+    if (!reloading && isTopFrame) {
+      markReloading(undefined, location.href, "Reloading Duck.ai…");
+    }
+  });
 
   const checkAndShowUpdate = (info: unknown): boolean => {
     const u = (info && typeof info === "object" ? info : {}) as {
@@ -388,7 +415,11 @@ if (!window.__duckai_ext) {
     updateBanner.show({
       cachedVersion: u.cachedVersion,
       upstreamVersion: u.upstreamVersion,
-      onReload: () => void startReload(),
+      onReload: () =>
+        void triggerReload({
+          label: "Updating Duck.ai…",
+          detail: u.upstreamVersion,
+        }),
       onDismiss: () => {
         updateDismissed = true;
       },

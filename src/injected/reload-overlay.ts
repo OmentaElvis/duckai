@@ -18,6 +18,9 @@ export const RELOAD_MARKER_MAX_AGE_MS = 60_000;
 export interface ReloadMarker {
   at: number;
   upstreamVersion?: string;
+  label?: string;
+  /** Page that started the reload; used to avoid showing the overlay after a cross-origin navigation. */
+  href?: string;
 }
 
 export interface ReloadOverlayOptions {
@@ -77,9 +80,15 @@ const STYLES = `
 `;
 
 /** Record that a reload is about to start. Safe to call outside the DOM. */
-export function markReloading(upstreamVersion?: string): ReloadMarker {
+export function markReloading(
+  upstreamVersion?: string,
+  href?: string,
+  label?: string,
+): ReloadMarker {
   const marker: ReloadMarker = { at: Date.now() };
   if (upstreamVersion) marker.upstreamVersion = upstreamVersion;
+  if (href) marker.href = href;
+  if (label) marker.label = label;
   try {
     sessionStorage.setItem(MARKER_KEY, JSON.stringify(marker));
   } catch {
@@ -113,6 +122,8 @@ export function consumeReloadMarker(
       ...(typeof parsed.upstreamVersion === "string"
         ? { upstreamVersion: parsed.upstreamVersion }
         : {}),
+      ...(typeof parsed.label === "string" ? { label: parsed.label } : {}),
+      ...(typeof parsed.href === "string" ? { href: parsed.href } : {}),
     };
   } catch {
     return null;
@@ -169,7 +180,7 @@ export function mountReloadOverlay(defaults: ReloadOverlayOptions = {}): ReloadO
   return {
     show(opts: ReloadOverlayOptions = {}) {
       visible = true;
-      label.textContent = opts.label ?? defaults.label ?? "Updating Duck.ai…";
+      label.textContent = opts.label ?? defaults.label ?? "Reloading Duck.ai…";
       detail.textContent = opts.detail ?? defaults.detail ?? "";
       container.style.display = "block";
       attach();

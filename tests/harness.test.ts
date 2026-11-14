@@ -209,7 +209,7 @@ describe("harness bridge", () => {
     expect(res.result.hasUpdate).toBe(false);
   });
 
-  test("reloadUpdate invokes the worker reload hook", async () => {
+  test("reloadUpdate and reload invoke the worker reload hook", async () => {
     let requested = 0;
     setReloadHandler(() => {
       requested++;
@@ -224,9 +224,17 @@ describe("harness bridge", () => {
     expect(res.result.reloading).toBe(true);
     expect(requested).toBe(1);
 
+    const res2 = (await handleHarnessCall({ method: "reload" })) as {
+      ok: boolean;
+      result: { reloading: boolean };
+    };
+    expect(res2.ok).toBe(true);
+    expect(res2.result.reloading).toBe(true);
+    expect(requested).toBe(2);
+
     // Without a registered hook the page can fall back safely.
     setReloadHandler(null);
-    const missing = (await handleHarnessCall({ method: "reloadUpdate" })) as {
+    const missing = (await handleHarnessCall({ method: "reload" })) as {
       ok: boolean;
       error: string;
     };

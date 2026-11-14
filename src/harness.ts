@@ -323,11 +323,12 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         const p = (params ?? {}) as { versionTag?: string };
         return { ok: true, result: noteLoadedVersion(p.versionTag) };
       }
+      case "reload":
       case "reloadUpdate": {
         if (!reloadHandler || !reloadHandler()) {
           return { ok: false, error: "webview is not ready to reload yet" };
         }
-        log.child("cache").info("page requested reload from updated cache");
+        log.child("cache").info("page requested webview reload");
         return { ok: true, result: { reloading: true } };
       }
       case "selfCheck": {

@@ -34,9 +34,11 @@ describe("reload marker", () => {
   });
 
   test("round-trips the upstream version and is consumed once", () => {
-    markReloading("serp_v2");
+    markReloading("serp_v2", "https://duck.ai/", "Reloading Duck.ai…");
     const marker = consumeReloadMarker();
     expect(marker?.upstreamVersion).toBe("serp_v2");
+    expect(marker?.href).toBe("https://duck.ai/");
+    expect(marker?.label).toBe("Reloading Duck.ai…");
     expect(marker?.at).toBeGreaterThan(0);
     // Second read: the marker must not leak into another page load.
     expect(consumeReloadMarker()).toBeNull();
