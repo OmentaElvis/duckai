@@ -6,9 +6,11 @@
  * and answers the worker's blocking IPC requests over a SharedArrayBuffer.
  */
 import { fetchUpstream, readCachedHtml, writeCachedHtml } from "./cache";
-import { handleHarnessCall, setAvailableUpdate } from "./harness";
+import { handleHarnessCall, setAvailableUpdate, setReloadHandler } from "./harness";
 import { log } from "./logging/host";
 import {
+  IPC_CMD_INDEX,
+  IPC_CMD_RELOAD,
   IPC_REQUEST,
   IPC_RESPONSE,
   readPayload,
@@ -62,10 +64,19 @@ void (async () => {
     if (upstreamTag && cachedTag && upstreamTag !== cachedTag) {
       log.child("cache").info(`upstream update detected: ${cachedTag} → ${upstreamTag}`);
       writeCachedHtml(upstream.html);
+      // Only advertise an update if the new document really landed on disk —
+      // otherwise "Reload" would keep re-loading the old cache forever.
+      const saved = readCachedHtml();
+      if (!saved || saved.versionTag !== upstreamTag) {
+        log.child("cache").warn("cache write did not persist; not advertising update");
+        return;
+      }
       setAvailableUpdate({
         hasUpdate: true,
         cachedVersion: cachedTag,
+        cachedSha: cached.versionSha,
         upstreamVersion: upstreamTag,
+        upstreamSha: upstream.versionSha,
         updatedAt: Date.now(),
       });
     } else {
@@ -77,6 +88,15 @@ void (async () => {
 })();
 
 let views: IpcViews | null = null;
+
+// The worker cannot receive postMessage while blocked in webview.run(); signal
+// a reload through the shared control slot and let its GTK poll pick it up.
+setReloadHandler(() => {
+  if (!views) return false;
+  Atomics.store(views.control, IPC_CMD_INDEX, IPC_CMD_RELOAD);
+  Atomics.notify(views.control, IPC_CMD_INDEX);
+  return true;
+});
 
 worker.onmessage = async (event: MessageEvent) => {
   const message = event.data as WorkerMessage;

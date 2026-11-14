@@ -14,6 +14,9 @@ import { INJECT_SCRIPT } from "./generated/inject-script";
 import { applyWindowTheme, loadHtmlWithBase, scheduleWindowNudge } from "./native";
 import { log } from "./logging/host";
 import {
+  IPC_CMD_INDEX,
+  IPC_CMD_NONE,
+  IPC_CMD_RELOAD,
   IPC_IDLE,
   IPC_RESPONSE,
   IPC_REQUEST,
@@ -78,6 +81,34 @@ interface Pending {
 const pendingQueue: Pending[] = [];
 let inFlight: (Pending & { startedAt: number }) | null = null;
 
+const target = process.env.DUCKAI_URL ?? "https://duck.ai";
+const noCache = process.env.DUCKAI_NO_CACHE === "1";
+let loadedFromCache = false;
+
+/**
+ * Load Duck.ai from the cache if one is available (and caching is enabled),
+ * otherwise navigate to the live site. Used both for the initial load and when
+ * the page asks to apply an update: by then the host has already refreshed the
+ * cache, so re-reading it picks up the new build instead of reloading the old
+ * document in place.
+ */
+function loadFromCacheOrNetwork(reason: "startup" | "reload"): void {
+  loadedFromCache = false;
+  if (!noCache && target === "https://duck.ai") {
+    const cached = readCachedHtml();
+    if (cached) {
+      loadedFromCache = loadHtmlWithBase(webview, cached.html, "https://duck.ai/");
+      if (loadedFromCache) {
+        const verb = reason === "reload" ? "reloaded" : "loaded";
+        log.info(
+          `${verb} from offline cache: ${cached.versionTag} (${cached.versionSha.slice(0, 8)})`,
+        );
+      }
+    }
+  }
+  if (!loadedFromCache) webview.navigate(target);
+}
+
 // bindRaw: seq keeps the page-side Promise open until webview.return(seq, ...) is called.
 // Returns void immediately — the GTK main loop is never blocked.
 webview.bindRaw("__harnessNativeCall", (seq: string, rawReq: string) => {
@@ -123,7 +154,20 @@ function pollTick(_userData: unknown): number {
     Atomics.store(control, 0, IPC_IDLE);
   }
 
-  // ── Step 3: start the next queued request ─────────────────────────────────
+  // ── Step 3: apply a pending reload requested by the page ──────────────────
+  // Wait until the harness response for the reload request has been delivered
+  // (and no other call is mid-flight) before replacing the document.
+  if (inFlight === null && Atomics.load(control, IPC_CMD_INDEX) === IPC_CMD_RELOAD) {
+    Atomics.store(control, IPC_CMD_INDEX, IPC_CMD_NONE);
+    // Calls queued by the outgoing document will never be answered on the new
+    // document (their webview-bun `seq` handles are invalid), so drop them.
+    pendingQueue.length = 0;
+    log.info("reloading webview from updated cache");
+    loadFromCacheOrNetwork("reload");
+    return 1; // G_SOURCE_CONTINUE
+  }
+
+  // ── Step 4: start the next queued request ─────────────────────────────────
   if (inFlight === null && pendingQueue.length > 0 && Atomics.load(control, 0) === IPC_IDLE) {
     const next = pendingQueue.shift()!;
     let len: number;
@@ -187,23 +231,8 @@ try {
 
 webview.init(INJECT_SCRIPT);
 
-const target = process.env.DUCKAI_URL ?? "https://duck.ai";
-const noCache = process.env.DUCKAI_NO_CACHE === "1";
 postMessage({ type: "init", buffer });
 
-let loadedFromCache = false;
-if (!noCache && target === "https://duck.ai") {
-  const cached = readCachedHtml();
-  if (cached) {
-    loadedFromCache = loadHtmlWithBase(webview, cached.html, "https://duck.ai/");
-    if (loadedFromCache) {
-      log.info(`loaded from offline cache: ${cached.versionTag} (${cached.versionSha.slice(0, 8)})`);
-    }
-  }
-}
-
-if (!loadedFromCache) {
-  webview.navigate(target);
-}
+loadFromCacheOrNetwork("startup");
 
 webview.run();

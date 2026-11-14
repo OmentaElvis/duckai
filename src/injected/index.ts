@@ -13,6 +13,12 @@ import { mountApprovalUi, type ApprovalAnswer } from "./approval-ui";
 import { mountHealthUi, type HealthUi } from "./health-ui";
 import { mountToolsUi, type ToolsUi } from "./tools-ui";
 import { mountUpdateBanner } from "./update-banner";
+import {
+  clearReloadMarker,
+  consumeReloadMarker,
+  markReloading,
+  mountReloadOverlay,
+} from "./reload-overlay";
 import { mountSettingsEntry } from "./settings-menu";
 import { log, type LogEntry } from "./log";
 import { onSSEEvent } from "./sse";
@@ -52,6 +58,14 @@ declare global {
   interface Window {
     __duckai_ext?: ExtGlobal;
   }
+}
+
+/** Build metadata exposed by Duck.ai on the root <html> element. */
+function readPageVersion(): { versionTag?: string; versionSha?: string } {
+  const root = typeof document !== "undefined" ? document.documentElement : null;
+  const versionTag = root?.getAttribute("data-version-tag") ?? undefined;
+  const versionSha = root?.getAttribute("data-version-sha") ?? undefined;
+  return { versionTag, versionSha };
 }
 
 if (!window.__duckai_ext) {
@@ -301,38 +315,133 @@ if (!window.__duckai_ext) {
   ext.ready = true;
   log.info(`extension ready on ${location.host}`);
 
+  // ── Update banner & reload progress ───────────────────────────────────────
+  // Only the top frame owns the notice: if the injection also runs inside an
+  // iframe it must not consume the reload marker or draw a second banner.
+  const isTopFrame = window.top === window;
   const updateBanner = mountUpdateBanner();
-  const checkAndShowUpdate = (info: unknown) => {
+  const reloadOverlay = mountReloadOverlay();
+  let currentUpdate: { cachedVersion?: string; upstreamVersion?: string } | null = null;
+  let reloading = false;
+  let updateShown = false;
+  let updateDismissed = false;
+  let updateAttempts = 0;
+
+  const finishReload = () => {
+    if (!reloading) return;
+    reloading = false;
+    clearReloadMarker();
+    reloadOverlay.hide();
+  };
+
+  // A reload began in the previous document. Keep a visible progress overlay
+  // on screen until this page has actually loaded, so the navigation does not
+  // look like a frozen webview.
+  const pendingReload = isTopFrame ? consumeReloadMarker() : null;
+  if (pendingReload) {
+    reloading = true;
+    reloadOverlay.show({ detail: pendingReload.upstreamVersion });
+    const hideWhenReady = () => window.setTimeout(finishReload, 350);
+    if (document.readyState === "complete") hideWhenReady();
+    else window.addEventListener("load", hideWhenReady, { once: true });
+    // Safety net: never leave the app covered if `load` is delayed forever.
+    window.setTimeout(finishReload, 20_000);
+  }
+
+  const startReload = async (): Promise<void> => {
+    if (reloading) return;
+    reloading = true;
+    const marker = markReloading(currentUpdate?.upstreamVersion);
+    updateBanner.setReloading(true);
+    reloadOverlay.show({ detail: marker.upstreamVersion });
+    try {
+      await callHarness("reloadUpdate");
+      // The worker replaces the document asynchronously. If that never happens,
+      // recover instead of leaving the window covered by the overlay.
+      window.setTimeout(() => {
+        if (!reloading) return;
+        log.warn("webview reload did not start; falling back to location.reload()");
+        finishReload();
+        updateBanner.setReloading(false);
+        location.reload();
+      }, 15_000);
+    } catch (err) {
+      log.warn("reloadUpdate failed", String(err));
+      finishReload();
+      updateBanner.setReloading(false);
+      location.reload();
+    }
+  };
+
+  const checkAndShowUpdate = (info: unknown): boolean => {
     const u = (info && typeof info === "object" ? info : {}) as {
       hasUpdate?: boolean;
       cachedVersion?: string;
       upstreamVersion?: string;
     };
-    if (u.hasUpdate) {
-      updateBanner.show({
-        cachedVersion: u.cachedVersion,
-        upstreamVersion: u.upstreamVersion,
-      });
+    if (!u.hasUpdate || reloading || updateDismissed || !isTopFrame) return false;
+    currentUpdate = {
+      cachedVersion: u.cachedVersion,
+      upstreamVersion: u.upstreamVersion,
+    };
+    updateShown = true;
+    updateBanner.show({
+      cachedVersion: u.cachedVersion,
+      upstreamVersion: u.upstreamVersion,
+      onReload: () => void startReload(),
+      onDismiss: () => {
+        updateDismissed = true;
+      },
+    });
+    return true;
+  };
+
+  // Wait until the root <html> attributes exist before reporting the build
+  // version; otherwise the host cannot tell whether a reload actually applied
+  // the new cache and the banner would immediately reappear.
+  const announcePageReady = () => {
+    // Only the top document may clear a pending update: nested frames can be
+    // on a different build and would otherwise dismiss the notice too early.
+    const version = isTopFrame ? readPageVersion() : {};
+    callHarness("pageReady", {
+      href: location.href,
+      ua: navigator.userAgent,
+      ...version,
+    })
+      .then((r) => {
+        log.info("host acknowledged pageReady", r);
+        const res = r as { update?: unknown } | undefined;
+        if (res?.update) checkAndShowUpdate(res.update);
+      })
+      .catch((err) => log.warn("host unreachable", String(err)));
+  };
+
+  if (document.readyState === "loading" && !readPageVersion().versionTag) {
+    document.addEventListener("DOMContentLoaded", announcePageReady, { once: true });
+  } else {
+    announcePageReady();
+  }
+
+  // The host fetches upstream in the background (with an 8s timeout) and may
+  // still be running when the page is ready. Poll for a while so an update that
+  // lands late is not silently missed.
+  const pollForUpdate = async () => {
+    updateAttempts++;
+    if (!updateShown && !updateDismissed && !reloading) {
+      try {
+        const res = await callHarness("checkUpdate", isTopFrame ? readPageVersion() : undefined);
+        checkAndShowUpdate(res);
+      } catch {
+        /* host still starting */
+      }
+    }
+    if (!updateShown && !updateDismissed && updateAttempts < 10) {
+      window.setTimeout(pollForUpdate, 15_000);
     }
   };
 
-  callHarness("pageReady", { href: location.href, ua: navigator.userAgent })
-    .then((r) => {
-      log.info("host acknowledged pageReady", r);
-      const res = r as { update?: unknown } | undefined;
-      if (res?.update) checkAndShowUpdate(res.update);
-    })
-    .catch((err) => log.warn("host unreachable", String(err)));
-
-  // Secondary check once host background update fetch completes
-  setTimeout(async () => {
-    try {
-      const res = await callHarness("checkUpdate");
-      checkAndShowUpdate(res);
-    } catch {
-      /* ignore */
-    }
-  }, 4000);
+  // Secondary check once host background update fetch completes.
+  window.setTimeout(pollForUpdate, 4000);
 
   // Load the custom-tool manifest; tools stay disabled until it arrives.
   void (async () => {

@@ -9,7 +9,7 @@
  * over a SharedArrayBuffer while the main thread does the actual (async) work.
  *
  * Shared memory layout:
- *   offset 0                 Int32Array(4): [state, requestLength, responseLength, pad]
+ *   offset 0                 Int32Array(4): [state, requestLength, responseLength, command]
  *   offset IPC_DATA_OFFSET   Uint8Array:    request/response payload bytes
  *
  * Only one call is ever in flight (the worker serialises calls by blocking),
@@ -23,6 +23,15 @@ export const IPC_WAIT_TIMEOUT_MS = 120_000;
 export const IPC_IDLE = 0;
 export const IPC_REQUEST = 1;
 export const IPC_RESPONSE = 2;
+
+/**
+ * Main-thread → worker commands. The worker's event loop is blocked inside
+ * `webview.run()`, so commands are delivered through the otherwise unused
+ * fourth control slot and picked up by the same GTK poll that services calls.
+ */
+export const IPC_CMD_INDEX = 3;
+export const IPC_CMD_NONE = 0;
+export const IPC_CMD_RELOAD = 1;
 
 export interface IpcViews {
   control: Int32Array;

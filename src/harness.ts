@@ -260,7 +260,9 @@ export async function executeTool(
 export interface UpdateInfo {
   hasUpdate: boolean;
   cachedVersion?: string;
+  cachedSha?: string;
   upstreamVersion?: string;
+  upstreamSha?: string;
   updatedAt?: number;
 }
 
@@ -274,6 +276,36 @@ export function getAvailableUpdate(): UpdateInfo {
   return availableUpdate;
 }
 
+/**
+ * Called when a page announces the build it actually loaded. If it is already
+ * on the upstream build, the pending reload notice is stale (usually because a
+ * reload just completed) and must be cleared so it does not come straight back.
+ *
+ * Only the version *tag* is compared. The SHA is not reliable for this: build
+ * timestamps can change while the source hash stays the same, so matching the
+ * SHA alone would hide genuine updates.
+ */
+export function noteLoadedVersion(versionTag?: string): UpdateInfo {
+  if (!availableUpdate.hasUpdate) return availableUpdate;
+
+  const tagMatches = Boolean(
+    versionTag && availableUpdate.upstreamVersion && versionTag === availableUpdate.upstreamVersion,
+  );
+  if (tagMatches) {
+    log.child("cache").info(`page is on ${versionTag}; clearing update notice`);
+    availableUpdate = { hasUpdate: false };
+  }
+  return availableUpdate;
+}
+
+type ReloadHandler = () => boolean;
+let reloadHandler: ReloadHandler | null = null;
+
+/** Register the webview-side hook used by the page's "Reload" action. */
+export function setReloadHandler(handler: ReloadHandler | null): void {
+  reloadHandler = handler;
+}
+
 /** Wire-protocol handler. Never throws. */
 export async function handleHarnessCall(req: unknown): Promise<unknown> {
   try {
@@ -281,11 +313,23 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
     switch (method) {
       case "ping":
         return { ok: true, result: { pong: Date.now() } };
-      case "pageReady":
+      case "pageReady": {
+        const p = (params ?? {}) as { versionTag?: string };
         log.child("bridge").info("page ready", params);
-        return { ok: true, result: { version: VERSION, update: getAvailableUpdate() } };
-      case "checkUpdate":
-        return { ok: true, result: getAvailableUpdate() };
+        const update = noteLoadedVersion(p.versionTag);
+        return { ok: true, result: { version: VERSION, update } };
+      }
+      case "checkUpdate": {
+        const p = (params ?? {}) as { versionTag?: string };
+        return { ok: true, result: noteLoadedVersion(p.versionTag) };
+      }
+      case "reloadUpdate": {
+        if (!reloadHandler || !reloadHandler()) {
+          return { ok: false, error: "webview is not ready to reload yet" };
+        }
+        log.child("cache").info("page requested reload from updated cache");
+        return { ok: true, result: { reloading: true } };
+      }
       case "selfCheck": {
         const p = params as { telemetryBlocked?: boolean; bridgeOk?: boolean; error?: string };
         const status = p.telemetryBlocked && p.bridgeOk ? "OK" : "FAIL";

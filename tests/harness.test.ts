@@ -8,6 +8,7 @@ import {
   listManifest,
   listTools,
   setAvailableUpdate,
+  setReloadHandler,
 } from "../src/harness";
 
 // Isolate persisted tool settings so tests never touch ~/.duckai/settings.json.
@@ -156,5 +157,80 @@ describe("harness bridge", () => {
     // Reset
     setAvailableUpdate({ hasUpdate: false });
     expect(getAvailableUpdate().hasUpdate).toBe(false);
+  });
+
+  test("pageReady keeps the notice while the old build is still loaded", async () => {
+    setAvailableUpdate({
+      hasUpdate: true,
+      cachedVersion: "serp_v1",
+      upstreamVersion: "serp_v2",
+      // The SHA is deliberately identical to the upstream one: build timestamps
+      // can change without the source hash changing, and the SHA must not be
+      // enough to clear the notice.
+      upstreamSha: "same_sha",
+    });
+
+    const res = (await handleHarnessCall({
+      method: "pageReady",
+      params: { versionTag: "serp_v1", versionSha: "same_sha" },
+    })) as { result: { update?: { hasUpdate: boolean } } };
+    expect(res.result.update?.hasUpdate).toBe(true);
+
+    setAvailableUpdate({ hasUpdate: false });
+  });
+
+  test("pageReady clears the notice once the new build has loaded", async () => {
+    setAvailableUpdate({
+      hasUpdate: true,
+      cachedVersion: "serp_v1",
+      upstreamVersion: "serp_v2",
+      upstreamSha: "sha_v2",
+    });
+
+    const res = (await handleHarnessCall({
+      method: "pageReady",
+      params: { versionTag: "serp_v2", versionSha: "sha_v2" },
+    })) as { result: { update?: { hasUpdate: boolean } } };
+    expect(res.result.update?.hasUpdate).toBe(false);
+    expect(getAvailableUpdate().hasUpdate).toBe(false);
+  });
+
+  test("checkUpdate can also clear the notice for the loaded build", async () => {
+    setAvailableUpdate({
+      hasUpdate: true,
+      cachedVersion: "serp_v1",
+      upstreamVersion: "serp_v2",
+    });
+
+    const res = (await handleHarnessCall({
+      method: "checkUpdate",
+      params: { versionTag: "serp_v2" },
+    })) as { result: { hasUpdate: boolean } };
+    expect(res.result.hasUpdate).toBe(false);
+  });
+
+  test("reloadUpdate invokes the worker reload hook", async () => {
+    let requested = 0;
+    setReloadHandler(() => {
+      requested++;
+      return true;
+    });
+
+    const res = (await handleHarnessCall({ method: "reloadUpdate" })) as {
+      ok: boolean;
+      result: { reloading: boolean };
+    };
+    expect(res.ok).toBe(true);
+    expect(res.result.reloading).toBe(true);
+    expect(requested).toBe(1);
+
+    // Without a registered hook the page can fall back safely.
+    setReloadHandler(null);
+    const missing = (await handleHarnessCall({ method: "reloadUpdate" })) as {
+      ok: boolean;
+      error: string;
+    };
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain("not ready");
   });
 });

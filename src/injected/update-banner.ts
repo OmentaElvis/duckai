@@ -5,13 +5,16 @@
 export interface UpdateBannerOptions {
   cachedVersion?: string;
   upstreamVersion?: string;
-  onReload?: () => void;
+  /** Start the reload. When omitted the banner falls back to `location.reload()`. */
+  onReload?: () => void | Promise<void>;
   onDismiss?: () => void;
 }
 
 export interface UpdateBanner {
   show(opts: UpdateBannerOptions): void;
   hide(): void;
+  /** Reflect an in-progress reload in the banner (spinner + disabled buttons). */
+  setReloading(reloading: boolean): void;
 }
 
 const STYLES = `
@@ -49,6 +52,18 @@ const STYLES = `
     border-radius: 50%;
     background: #0a84ff;
     flex-shrink: 0;
+    box-sizing: border-box;
+  }
+  .dot.loading {
+    width: 12px;
+    height: 12px;
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    border-top-color: #0a84ff;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
   .text {
     display: flex;
@@ -71,8 +86,13 @@ const STYLES = `
     cursor: pointer;
     transition: background 0.15s;
   }
-  .btn-reload:hover {
+  .btn-reload:hover:not(:disabled) {
     background: #0071e3;
+  }
+  .btn-reload:disabled {
+    opacity: 0.65;
+    cursor: default;
+    background: #0a84ff;
   }
   .btn-dismiss {
     background: transparent;
@@ -83,8 +103,12 @@ const STYLES = `
     padding: 2px 4px;
     line-height: 1;
   }
-  .btn-dismiss:hover {
+  .btn-dismiss:hover:not(:disabled) {
     color: #fff;
+  }
+  .btn-dismiss:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 `;
 
@@ -105,6 +129,16 @@ export function mountUpdateBanner(): UpdateBanner {
   const text = document.createElement("span");
   text.className = "text";
 
+  const label = document.createElement("span");
+  label.className = "label";
+  label.textContent = "Duck.ai update ready";
+
+  const version = document.createElement("span");
+  version.className = "version";
+  version.hidden = true;
+
+  text.append(label, version);
+
   const reloadBtn = document.createElement("button");
   reloadBtn.className = "btn-reload";
   reloadBtn.textContent = "Reload";
@@ -118,18 +152,33 @@ export function mountUpdateBanner(): UpdateBanner {
   shadow.append(style, wrapper);
 
   let activeOpts: UpdateBannerOptions | null = null;
+  let busy = false;
 
   reloadBtn.addEventListener("click", () => {
-    activeOpts?.onReload?.();
-    location.reload();
+    if (busy) return;
+    const reload = activeOpts?.onReload;
+    if (!reload) {
+      location.reload();
+      return;
+    }
+    setReloading(true);
+    Promise.resolve()
+      .then(reload)
+      .catch(() => {
+        // The page-level fallback is preferable to a banner that looks stuck.
+        location.reload();
+      });
   });
 
   dismissBtn.addEventListener("click", () => {
+    if (busy) return;
     activeOpts?.onDismiss?.();
     container.style.display = "none";
   });
 
+  let mounted = false;
   const mount = () => {
+    mounted = true;
     if (!container.parentElement && document.body) {
       document.body.appendChild(container);
     }
@@ -138,18 +187,37 @@ export function mountUpdateBanner(): UpdateBanner {
   if (document.body) mount();
   else document.addEventListener("DOMContentLoaded", mount);
 
+  function setReloading(reloading: boolean) {
+    busy = reloading;
+    dot.classList.toggle("loading", reloading);
+    reloadBtn.disabled = reloading;
+    dismissBtn.disabled = reloading;
+    reloadBtn.textContent = reloading ? "Reloading…" : "Reload";
+    label.textContent = reloading ? "Updating Duck.ai…" : "Duck.ai update ready";
+    if (reloading) {
+      if (!mounted) mount();
+      container.style.display = "block";
+    }
+  }
+
   return {
     show(opts: UpdateBannerOptions) {
       activeOpts = opts;
+      setReloading(false);
       mount();
-      const versionStr = opts.upstreamVersion
-        ? `<span class="version">(${opts.upstreamVersion})</span>`
-        : "";
-      text.innerHTML = `<span>Duck.ai update ready</span>${versionStr}`;
+      label.textContent = "Duck.ai update ready";
+      if (opts.upstreamVersion) {
+        version.textContent = `(${opts.upstreamVersion})`;
+        version.hidden = false;
+      } else {
+        version.textContent = "";
+        version.hidden = true;
+      }
       container.style.display = "block";
     },
     hide() {
       container.style.display = "none";
     },
+    setReloading,
   };
 }
