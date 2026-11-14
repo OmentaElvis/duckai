@@ -1,3 +1,18 @@
+# [1.1.0](https://github.com/OmentaElvis/duckai/compare/v1.0.0...v1.1.0) (2026-11-14)
+
+
+### Bug Fixes
+
+* add a reload overlay and properly remove update banner ([1c43edd](https://github.com/OmentaElvis/duckai/commit/1c43eddb6fba5f7dba92c4897da8cef6c614d685))
+* hookup loading animation ([b8378a9](https://github.com/OmentaElvis/duckai/commit/b8378a98116bea65ad84273fd417bac2b2eec572))
+* mute reasoning logs ([89972e5](https://github.com/OmentaElvis/duckai/commit/89972e5356b19098370881208f544fc32019bf9b))
+
+
+### Features
+
+* add per chat harness toggle ([e5ce42a](https://github.com/OmentaElvis/duckai/commit/e5ce42a858a7cdcb8a24447a007068710dd25449))
+* **harness:** reduce prompt footprint and block incompatible models ([193d977](https://github.com/OmentaElvis/duckai/commit/193d977c345bc77d8abc4d38d273424edd298b4b))
+
 # 1.0.0 (2026-11-13)
 
 
