@@ -31,6 +31,7 @@ import type {
 } from "./protocol";
 import { maybeOffload } from "./tools/results";
 import { coreTools } from "./tools";
+import { makeToolHelpTool } from "./tools/meta";
 import { VERSION } from "./version";
 
 export type { ToolManifestEntry, PermissionScope };
@@ -476,3 +477,7 @@ if (isTest) {
 for (const tool of coreTools) {
   registerTool(tool);
 }
+
+// tool_help is registered last so its manifest closure sees the full set,
+// including any tools registered above (coreTools + the echo test stub).
+registerTool(makeToolHelpTool(() => listManifest()));

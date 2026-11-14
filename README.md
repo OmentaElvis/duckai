@@ -118,7 +118,19 @@ Tool calls stay compact in the transcript, one line with the command and its sta
 ## Limitations
 
 - **Small context window (~10k tokens).** Best suited to narrow tasks that augment existing capabilities, such as checking a calendar or reading email, rather than long agentic sessions. Tool prompts matter; MCP in particular can be token-heavy.
-- **Model quirks.** Some models (ChatGPT in duck.ai, for example) refuse to treat tool calls as executable when they arrive as user text. Claude Haiku works well.
+- **Model compatibility varies.** The harness relies on the model following a plain-text envelope contract (a fenced code block). Compliance varies significantly across models in duck.ai:
+
+| Model | Status | Notes |
+|---|---|---|
+| Claude Haiku 3.5 | ✅ Works well | Reliable fence blocks, correct STOP behaviour |
+| Mistral (duck.ai) | ✅ Works well | Follows the envelope consistently |
+| Gemma 4 31B | ✅ Works well | Good compliance |
+| GPT-5.4 mini | ⚠️ Mixed | Calls local tools correctly but also fires off redundant native WebSearch calls in parallel (e.g. googling the output format of a command it is about to run). Functional but wastes context. |
+| GPT-6 Luna | ❌ Incompatible | Never emits fence blocks; ignores the protocol entirely. **Harness auto-disables.** |
+| tinfoil/gpt-oss-120B | ❌ Incompatible | Fights the envelope format; refuses tool calls adversarially. **Harness auto-disables.** |
+
+  Incompatible models are detected at request time and the harness silently falls back to pure observation, so you get a clean native duck.ai experience rather than broken behaviour.
+
 - **Upstream drift.** duck.ai can change its UI, stream format or markup at any time. The built-in health checks track the pieces the harness depends on so breakage is visible early.
 - **No custom roles.** duck.ai does not expose system or tool roles, so extra instructions and tool results travel as user messages. That is also why some models will not emit tool calls reliably.
 

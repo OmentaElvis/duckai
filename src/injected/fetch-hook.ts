@@ -24,6 +24,20 @@ const log = rootLog.child("fetch");
 const CHAT_URL_RE = /\/duckchat\/v1\/chat(?:\?|$)/;
 const TELEMETRY_RE = /^https?:\/\/(improving\.duckduckgo\.com)(?=\/|$)/i;
 
+/**
+ * Models that cannot reliably follow the duckai-tool envelope protocol.
+ * The harness is automatically disabled for these so the user gets a clean
+ * native duck.ai experience instead of broken or adversarial tool calls.
+ *
+ * Tested findings:
+ *  - gpt-6-luna:          never emits fence blocks; ignores the protocol entirely.
+ *  - tinfoil/gpt-oss-120B: same — fights the envelope format, refuses tool calls.
+ */
+const INCOMPATIBLE_MODELS = new Set([
+  "gpt-6-luna",
+  "tinfoil/gpt-oss-120b",
+]);
+
 export interface FetchHookOptions {
   /** Called for every parsed SSE event (observation; used on the fallback path). */
   onSSEEvent?: SSEEventHook;
@@ -127,17 +141,28 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
 
     const harnessActive = opts.isHarnessEnabled ? opts.isHarnessEnabled() : true;
     const manifest = opts.getManifest?.() ?? [];
-    const toolsEnabled = harnessActive && manifest.length > 0 && typeof opts.callTool === "function";
+
+    const modelId = String(parsed.model ?? "").toLowerCase();
+    const modelIncompatible = INCOMPATIBLE_MODELS.has(modelId);
+    if (modelIncompatible) {
+      log.warn(
+        `chat request → model=${String(parsed.model)} is on the incompatible-model list — harness disabled for this request`,
+      );
+    }
+
+    const toolsEnabled =
+      harnessActive && !modelIncompatible && manifest.length > 0 && typeof opts.callTool === "function";
 
     log.info(
-      `chat request → model=${String(parsed.model)} messages=${rawMessages.length} tools=${manifest.length} harness=${harnessActive ? "on" : "off"} greeting=${String(parsed.canShowGreeting)}`,
+      `chat request → model=${String(parsed.model)} messages=${rawMessages.length} tools=${manifest.length} harness=${harnessActive && !modelIncompatible ? "on" : "off"} greeting=${String(parsed.canShowGreeting)}`,
     );
 
     if (!toolsEnabled) {
       const res = await origFetch(input, init);
       if (isChat) {
+        const reason = modelIncompatible ? "incompatible model" : harnessActive ? "no manifest" : "harness off";
         log.info(
-          `chat response ← status=${res.status} streaming (observe) [harness=${harnessActive ? "on" : "off"}]`,
+          `chat response ← status=${res.status} streaming (observe) [${reason}]`,
         );
       }
       return observeResponse(res);

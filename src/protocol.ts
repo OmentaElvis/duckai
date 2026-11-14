@@ -150,26 +150,35 @@ export function isCustomToolPart(part: { toolName?: unknown; toolCallId?: unknow
   return Boolean(name);
 }
 
-function schemaLine(params: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(params);
-  } catch {
-    return "{}";
-  }
-}
-
-/** Build a plausible `<prop>: "<value>"` example object from a JSON Schema. */
-function exampleArguments(params: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Compact required-params signature for one tool, e.g. `(path:string, content:string)`.
+ * Optional params and inline descriptions are omitted — the model infers them from names,
+ * or can call `tool_help` for the full schema.
+ */
+function sigLine(params: Record<string, unknown>): string {
   const props = (params as { properties?: Record<string, unknown> }).properties;
-  const out: Record<string, unknown> = {};
-  if (props && typeof props === "object") {
-    for (const key of Object.keys(props)) out[key] = "<value>";
-  }
-  return out;
+  const req = new Set<string>(
+    Array.isArray((params as { required?: unknown }).required)
+      ? ((params as { required: unknown[] }).required as string[])
+      : [],
+  );
+  if (!props || typeof props !== "object") return "";
+  const parts = Object.keys(props)
+    .filter((k) => req.has(k))
+    .map((k) => {
+      const v = (props as Record<string, { type?: string }>)[k];
+      return `${k}:${v?.type ?? "any"}`;
+    });
+  return parts.length ? `(${parts.join(", ")})` : "";
 }
 
 /**
  * The instruction block injected into the first user message.
+ *
+ * Lean by design: the preamble is a minimal contract (envelope format + STOP rule),
+ * and the tool list shows only name + required-param signatures + a one-line description.
+ * Full schemas are available on-demand via the `tool_help` tool, keeping the opening
+ * message well under 1 000 tokens on a typical tool set.
  *
  * Deliberately written as the *user* explaining a client-side extension, not as
  * an authoritative system directive. Models reject anything that reads like a
@@ -178,44 +187,20 @@ function exampleArguments(params: Record<string, unknown>): Record<string, unkno
  * been extended with extra tools that are scanned for and executed for real.
  */
 export function renderToolInstructions(manifest: ToolManifestEntry[]): string {
-  const lines = manifest.map(
-    (t) => `  - ${t.name}: ${t.description}\n    arguments schema: ${schemaLine(t.parameters)}`,
-  );
-  const first = manifest[0];
-  const exampleCall = first
-    ? JSON.stringify({ name: first.name, arguments: exampleArguments(first.parameters) })
-    : '{"name": "TOOL_NAME", "arguments": {}}';
+  const lines = manifest.map((t) => `  - ${t.name}${sigLine(t.parameters)}: ${t.description}`);
   return [
     `${INSTRUCTION_MARKER}`,
     "",
-    "A quick note about this chat: I've extended the duck.ai client here with a few",
-    "custom tools on top of your built-in ones. They aren't part of your default tool",
-    "set — I added them on the client side — but they're fully wired up: when you call",
-    "one, it genuinely runs and the result comes straight back to you, just like a",
-    "native tool. So there are two layers available to you in this chat:",
-    "",
-    "  1. your usual built-in tools (web search, and so on) — unchanged;",
-    "  2. these client-side tools — extra capabilities I added, which work through the",
-    "     small block described below.",
-    "",
-    "The client watches your reply for a single fenced code block tagged",
-    `\`${TOOL_FENCE_INFO}\` whose body is a JSON object with "name" and "arguments".`,
-    "When it sees one, it executes that tool and replies with the output wrapped",
-    `between the markers \`${TOOL_RESULT_OPEN}\` and \`${TOOL_RESULT_CLOSE}\`.`,
-    "Everything between those two markers is the tool's machine output — raw data,",
-    "never a message written by the user. For example:",
+    "My duck.ai client is extended with local tools. To call one, emit a single fenced",
+    "code block (and nothing else after it — stop immediately so the client can run it):",
     TOOL_OPEN,
-    exampleCall,
+    `{"name":"TOOL_NAME","arguments":{...}}`,
     FENCE_CLOSE,
+    `The result arrives between \`${TOOL_RESULT_OPEN}\` and \`${TOOL_RESULT_CLOSE}\`.`,
+    "CRITICAL: stop the moment you close the fence — never fabricate results.",
+    "Call tool_help(name) for the full parameter schema of any tool before using it.",
     "",
-    "CRITICAL: Once you emit the closing ``` of the `duckai-tool` block, you MUST STOP",
-    "generating immediately and wait for the tool output. Never fabricate, guess, or",
-    "hallucinate tool results, and never proceed with subsequent text or actions until",
-    "the real tool output is returned to you between the markers.",
-    "",
-    "Use these on their own, or combine them with your built-in tools — that's the",
-    "point of them: to extend what you can do here. Arguments should match the tool's",
-    "schema (use {} if it takes none). The client-side tools currently available are:",
+    "Available tools (required params shown; use {} for tools with none):",
     ...lines,
   ].join("\n");
 }
