@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/OmentaElvis/duckai/compare/v1.1.0...v1.2.0) (2026-11-17)
+
+
+### Features
+
+* add windows support ([d2e5808](https://github.com/OmentaElvis/duckai/commit/d2e580874ea3a4bbaded4f523d7e827e0d716da7))
+
 # [1.1.0](https://github.com/OmentaElvis/duckai/compare/v1.0.0...v1.1.0) (2026-11-14)
 
 
