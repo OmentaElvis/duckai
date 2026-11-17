@@ -8,6 +8,7 @@
  * registered entries mounted across menu re-renders.
  */
 import { log as rootLog } from "./log";
+import { whenDomReady } from "./dom";
 
 const log = rootLog.child("settings");
 
@@ -32,6 +33,7 @@ interface Entry extends SettingsEntryOptions {
 const SETTINGS_SELECTOR = '[data-testid="settings-button"]';
 const entries: Entry[] = [];
 let observer: MutationObserver | null = null;
+let started = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 const markerFor = (id: string): string => `data-duckai-ext-menu-${id}`;
@@ -87,14 +89,18 @@ function schedule(): void {
 }
 
 function start(): void {
-  if (observer) return;
-  try {
-    observer = new MutationObserver(schedule);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-  } catch (err) {
-    log.warn("settings menu observer failed", String(err));
-  }
-  schedule();
+  if (started) return;
+  started = true;
+  // documentElement may not exist yet under WebView2 (see ./dom).
+  whenDomReady(() => {
+    try {
+      observer = new MutationObserver(schedule);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (err) {
+      log.warn("settings menu observer failed", String(err));
+    }
+    schedule();
+  });
 }
 
 export function mountSettingsEntry(opts: SettingsEntryOptions): SettingsEntry {

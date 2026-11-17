@@ -156,6 +156,21 @@ describe("sanitizeMessages", () => {
   });
 });
 
+describe("renderToolInstructions", () => {
+  test("includes the host environment line when host info is provided", () => {
+    const out = renderToolInstructions(manifest, {
+      platform: "win32",
+      os: "Windows",
+      shell: "PowerShell (pwsh)",
+    });
+    expect(out).toContain("Host environment: Windows · default shell: PowerShell (pwsh)");
+  });
+
+  test("omits the host environment line without host info", () => {
+    expect(renderToolInstructions(manifest)).not.toContain("Host environment:");
+  });
+});
+
 describe("buildContinuation", () => {
   test("appends assistant text and a user tool-result turn", () => {
     const base: WireMessage[] = [{ role: "user", content: [{ type: "text", text: "hi" }] }];

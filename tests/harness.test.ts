@@ -30,13 +30,19 @@ describe("harness bridge", () => {
     expect((res.result as { pong: number }).pong).toBeGreaterThan(0);
   });
 
-  test("manifest lists echo tool", async () => {
+  test("manifest lists echo tool and host info", async () => {
     const res = (await handleHarnessCall({ method: "manifest" })) as {
       ok: boolean;
-      result: { name: string }[];
+      result: {
+        tools: { name: string }[];
+        hostInfo: { platform: string; os: string; shell: string };
+      };
     };
     expect(res.ok).toBe(true);
-    expect(res.result.map((t) => t.name)).toContain("echo");
+    expect(res.result.tools.map((t) => t.name)).toContain("echo");
+    expect(res.result.hostInfo.platform).toBe(process.platform);
+    expect(typeof res.result.hostInfo.os).toBe("string");
+    expect(res.result.hostInfo.shell.length).toBeGreaterThan(0);
     expect(listManifest()[0]!.parameters).toBeDefined();
   });
 

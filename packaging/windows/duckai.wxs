@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-user Windows Installer package for Duck.ai.
+
+  Built by scripts/build-msi.ts:
+
+    wix build -arch x64 -d Version=<x.y.z> -d ExePath=<abs path to dist/duckai.exe>
+
+  Installs to %LOCALAPPDATA%\Programs\DuckAI, so no administrator rights are
+  needed, and adds a Start Menu shortcut under "Duck.ai". The icon is read from
+  the executable itself (an .exe containing an icon resource is a valid icon
+  source), which is why the release build must be a branded Windows build.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Duck.ai"
+    Manufacturer="OmentaElvis"
+    Version="$(var.Version)"
+    UpgradeCode="de4ad3be-78e5-40bb-a5db-6bf185a6e2cf"
+    Scope="perUser">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Duck.ai is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="$(var.ExePath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/OmentaElvis/duckai" />
+
+    <Feature Id="Main" Title="Duck.ai" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="AppRuntime" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="DuckAI" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="Duck.ai" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <File Id="DuckaiExe" Source="$(var.ExePath)" KeyPath="yes" />
+    </ComponentGroup>
+
+    <!-- VC++ 2015-2022 x64 runtime: libwebview.dll links it dynamically and it
+         is not part of Windows. Installed beside the exe so the loader finds it
+         even though Bun extracts libwebview.dll to %TEMP% at runtime. -->
+    <ComponentGroup Id="AppRuntime" Directory="INSTALLFOLDER">
+      <File Id="Msvcp140" Source="$(var.RuntimeDir)\msvcp140.dll" />
+      <File Id="Vcruntime140" Source="$(var.RuntimeDir)\vcruntime140.dll" />
+      <File Id="Vcruntime140_1" Source="$(var.RuntimeDir)\vcruntime140_1.dll" />
+    </ComponentGroup>
+
+    <DirectoryRef Id="AppMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="cf3482c1-93a6-46fd-ae2d-2913c25c59df">
+        <Shortcut
+          Id="AppShortcut"
+          Name="Duck.ai"
+          Description="Chat with Duck.ai in a native window"
+          Target="[INSTALLFOLDER]duckai.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="AppIcon" />
+        <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\DuckAI"
+          Name="StartMenuShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

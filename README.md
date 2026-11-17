@@ -22,13 +22,35 @@ Then launch **Duck.ai** from your application menu, or run `duckai` in a termina
 
 Supported on **Debian 13+** and **Ubuntu 24.04+** (GTK 4 / WebKitGTK 6.0). Each release also includes a standalone `duckai-linux-x64` binary if you prefer not to use a package manager.
 
+### Windows
+
+Download the latest release from [Releases](https://github.com/OmentaElvis/duckai/releases/latest):
+
+- **`duckai_<version>_x64.msi`**: per-user installer. No administrator rights needed; installs to `%LOCALAPPDATA%\Programs\DuckAI`, adds a **Duck.ai** Start Menu entry, and registers in *Apps & features* so upgrades and uninstall work normally.
+- **`duckai-windows-x64.zip`**: portable build (the executable plus its runtime DLLs) if you prefer not to install anything.
+
+Both include everything the app needs at runtime, including the Microsoft Visual C++ runtime used by the native webview library, you do not need to install the VC++ Redistributable separately.
+
+Requirements:
+
+- **WebView2 runtime**: included with Windows 11 and current Windows 10; otherwise install the [Evergreen Bootstrapper](https://developer.microsoft.com/microsoft-edge/webview2/).
+- **PowerShell**: `run_command` prefers `pwsh` (PowerShell 7+), falls back to Windows PowerShell 5, then `cmd.exe`.
+
+The builds are unsigned, so SmartScreen may show *"Windows protected your PC"* on first launch: choose **More info → Run anyway**. Removing that warning requires a code-signing certificate.
+
+Windows binaries are GUI executables with the Duck.ai icon embedded, so no console window opens and the app is branded in the titlebar, taskbar, Start Menu and *Apps & features*. Windows-specific behaviour: shell commands run through PowerShell instead of `bash`, `notify` uses the Windows toast API, and the async harness bridge uses a Win32 `SetTimer` poll. GTK-only window theming and nudges are skipped.
+
 ### From source
 
 ```bash
 bun install
-bun run dev        # build the injected script and launch the app
-bun run build      # compile the linux-x64 binary to dist/duckai
-bun run build:deb  # package dist/duckai_<version>_amd64.deb
+bun run dev                 # build the injected script and launch the app
+bun run build               # compile the linux-x64 binary to dist/duckai
+bun run build:deb           # package dist/duckai_<version>_amd64.deb
+bun run build:win           # cross-compile a windows-x64 GUI exe to dist/duckai.exe
+bun run build:win:console   # same, but keeps a console attached for logs/debugging
+bun run stage:win-runtime   # copy the VC++ runtime DLLs beside dist/duckai.exe
+bun run build:msi           # package dist/duckai.exe as a per-user .msi
 ```
 
 ## Why

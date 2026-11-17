@@ -11,6 +11,7 @@
  *   - Tool supervision and synthetic event splicing are bypassed.
  */
 import { log as rootLog } from "./log";
+import { whenDomReady } from "./dom";
 import { assistantElements, conversationIdOf } from "./ui";
 
 const log = rootLog.child("toggle");
@@ -283,6 +284,7 @@ function ensureButton(): void {
 }
 
 let observer: MutationObserver | null = null;
+let started = false;
 let scheduleTimer: ReturnType<typeof setTimeout> | null = null;
 
 function schedule(): void {
@@ -302,16 +304,20 @@ export function mountComposerToggle(): { destroy(): void; update(): void } {
     return { destroy: () => {}, update: () => {} };
   }
 
-  if (!observer) {
-    try {
-      observer = new MutationObserver(schedule);
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-    } catch (err) {
-      log.warn("composer toggle observer failed", String(err));
-    }
+  if (!started) {
+    started = true;
+    // documentElement may not exist yet under WebView2 (see ./dom).
+    whenDomReady(() => {
+      try {
+        observer = new MutationObserver(schedule);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      } catch (err) {
+        log.warn("composer toggle observer failed", String(err));
+      }
+      schedule();
+    });
   }
 
-  schedule();
   return {
     destroy() {
       if (observer) {

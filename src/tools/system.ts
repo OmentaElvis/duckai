@@ -88,7 +88,44 @@ async function sendDesktopNotification(title: string, message: string): Promise<
     // osascript not found
   }
 
-  return { sent: false, error: "No supported desktop notification utility (notify-send, zenity, osascript) found." };
+  try {
+    // 4. Windows toast notification via PowerShell WinRT API
+    if (process.platform === "win32") {
+      const escapedMsg = message.replace(/'/g, "''");
+      const escapedTitle = (title || "DuckAI").replace(/'/g, "''");
+      const script = [
+        `$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime];`,
+        `$template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02;`,
+        `$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template);`,
+        `$xml.GetElementsByTagName('text')[0].InnerText = '${escapedTitle}';`,
+        `$xml.GetElementsByTagName('text')[1].InnerText = '${escapedMsg}';`,
+        `$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);`,
+        // An unregistered AUMID throws, so fall back to PowerShell's own
+        // registered app id — the toast still shows, just labelled PowerShell.
+        `try { [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('DuckAI').Show($toast) }`,
+        `catch { [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('PowerShell').Show($toast) }`,
+      ].join(" ");
+      // Try pwsh first, then fall back to powershell (Windows PowerShell 5)
+      for (const shell of ["pwsh", "powershell"]) {
+        try {
+          const proc = Bun.spawn([shell, "-Command", script], {
+            stdout: "ignore",
+            stderr: "ignore",
+            // Without this the toast helper briefly opens a console window.
+            windowsHide: true,
+          });
+          const code = await proc.exited;
+          if (code === 0) return { sent: true };
+        } catch {
+          // shell not found, try next
+        }
+      }
+    }
+  } catch {
+    // PowerShell not found
+  }
+
+  return { sent: false, error: "No supported desktop notification utility (notify-send, zenity, osascript, PowerShell) found." };
 }
 
 async function sendNtfyNotification(opts: {

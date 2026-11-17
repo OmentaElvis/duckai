@@ -22,6 +22,7 @@ import {
   upsertMcpServer,
 } from "./mcp/client";
 import type {
+  HostInfo,
   ManagedTool,
   Permission,
   PermissionScope,
@@ -35,6 +36,21 @@ import { makeToolHelpTool } from "./tools/meta";
 import { VERSION } from "./version";
 
 export type { ToolManifestEntry, PermissionScope };
+
+/**
+ * Describes the host OS and the shell `run_command` will use, so the injected
+ * page can tell the agent which commands and path syntax to emit.
+ */
+function getHostInfo(): HostInfo {
+  switch (process.platform) {
+    case "win32":
+      return { platform: "win32", os: "Windows", shell: "PowerShell (pwsh)" };
+    case "darwin":
+      return { platform: "darwin", os: "macOS", shell: "bash" };
+    default:
+      return { platform: process.platform, os: "Linux", shell: "bash" };
+  }
+}
 
 export interface Tool extends ToolManifestEntry {
   execute: (args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -374,7 +390,7 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
         return { ok: true, result: null };
       }
       case "manifest":
-        return { ok: true, result: listManifest() };
+        return { ok: true, result: { tools: listManifest(), hostInfo: getHostInfo() } };
       case "tools":
         return { ok: true, result: listToolStatus() };
       case "setToolEnabled": {

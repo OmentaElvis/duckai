@@ -173,6 +173,19 @@ function sigLine(params: Record<string, unknown>): string {
 }
 
 /**
+ * Describes the host machine environment. Sent from the Bun side to the
+ * injected page so the agent knows which OS and shell it is working with.
+ */
+export interface HostInfo {
+  /** Node.js platform string, e.g. "linux", "win32", "darwin". */
+  platform: string;
+  /** Human-readable OS name, e.g. "Linux", "Windows", "macOS". */
+  os: string;
+  /** Shell the harness uses for run_command, e.g. "bash", "PowerShell (pwsh)". */
+  shell: string;
+}
+
+/**
  * The instruction block injected into the first user message.
  *
  * Lean by design: the preamble is a minimal contract (envelope format + STOP rule),
@@ -186,7 +199,7 @@ function sigLine(params: Record<string, unknown>): string {
  * tool connection"), so we simply describe the real situation: the client has
  * been extended with extra tools that are scanned for and executed for real.
  */
-export function renderToolInstructions(manifest: ToolManifestEntry[]): string {
+export function renderToolInstructions(manifest: ToolManifestEntry[], hostInfo?: HostInfo): string {
   const lines = manifest.map((t) => `  - ${t.name}${sigLine(t.parameters)}: ${t.description}`);
   return [
     `${INSTRUCTION_MARKER}`,
@@ -200,6 +213,7 @@ export function renderToolInstructions(manifest: ToolManifestEntry[]): string {
     "CRITICAL: stop the moment you close the fence — never fabricate results.",
     "Call tool_help(name) for the full parameter schema of any tool before using it.",
     "",
+    ...(hostInfo ? [`Host environment: ${hostInfo.os} · default shell: ${hostInfo.shell}`, ""] : []),
     "Available tools (required params shown; use {} for tools with none):",
     ...lines,
   ].join("\n");

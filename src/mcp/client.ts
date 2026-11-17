@@ -176,6 +176,8 @@ class McpClient {
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, ...cfg.env },
+      // GUI executable on Windows: don't open a console for the MCP server.
+      windowsHide: true,
     });
     this.drainStderr();
     this.readLoop();

@@ -1,9 +1,10 @@
 /**
- * Native OS-window chrome via GTK4 / WebKitGTK (bun:ffi).
+ * Native OS-window chrome via GTK4 / WebKitGTK and Win32 (bun:ffi).
  *
  * All native bindings for the OS window live here so the rest of the app stays
- * free of `bun:ffi`. Linux/GTK only: on other platforms the calls are skipped
- * and the window keeps webview's defaults.
+ * free of `bun:ffi`. GTK styling is Linux-only; the Windows path only assigns
+ * the window icon (`--windows-icon` brands the .exe file, not the window).
+ * Other platforms keep webview's defaults.
  *
  * Note: GTK calls must run on the thread that owns the GTK main loop — i.e. the
  * webview worker thread, before/while `webview.run()` is active. Styling happens
@@ -14,6 +15,14 @@ import { dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi";
 import { log } from "./logging/host";
 
 const cstr = (s: string): Pointer => ptr(new TextEncoder().encode(`${s}\0`));
+
+/** UTF-16LE null-terminated string for Win32 `...W` APIs. */
+const wstr = (s: string): Pointer => {
+  const bytes = new Uint8Array((s.length + 1) * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < s.length; i++) view.setUint16(i * 2, s.charCodeAt(i), true);
+  return ptr(bytes);
+};
 
 /** GtkStyleProviderPriorities. */
 const PRIORITY_APPLICATION = 600;
@@ -34,6 +43,64 @@ export interface WindowTheme {
 /** Anything exposing webview-bun's native window handle. */
 export interface NativeWindow {
   unsafeWindowHandle: unknown;
+}
+
+/**
+ * Assign the executable's icon to the Win32 window.
+ *
+ * `webview` creates its window with no icon, so Windows draws its default
+ * placeholder in the titlebar and falls back to the process icon in the
+ * taskbar. `bun build --windows-icon` only brands the `.exe` file itself, so
+ * the running window must be told explicitly. `ExtractIconExW` pulls icon
+ * index 0 — the same icon Explorer shows — out of the executable, so this works
+ * for a portable exe with no extra files. Best-effort; never throws. No-op on
+ * non-Windows platforms.
+ */
+export function applyWindowIcon(webview: NativeWindow): void {
+  if (process.platform !== "win32") return;
+  const hwnd = webview.unsafeWindowHandle as unknown as number;
+  if (!hwnd) return;
+
+  try {
+    const shell32 = loadShell32();
+    const user32 = loadUser32();
+
+    const large = new BigUint64Array(1);
+    const small = new BigUint64Array(1);
+    const count = shell32.symbols.ExtractIconExW(
+      wstr(process.execPath),
+      0,
+      ptr(large),
+      ptr(small),
+      1,
+    ) as unknown as number;
+
+    if (!count) {
+      log.child("window").warn("window icon: executable contains no icon");
+      return;
+    }
+
+    const WM_SETICON = 0x0080;
+    const ICON_BIG = 1;
+    const ICON_SMALL = 0;
+
+    const big = large[0];
+    const smallIcon = small[0];
+    if (big) {
+      user32.symbols.SendMessageW(hwnd as never, WM_SETICON, ICON_BIG as never, big as never);
+    }
+    if (smallIcon) {
+      user32.symbols.SendMessageW(
+        hwnd as never,
+        WM_SETICON,
+        ICON_SMALL as never,
+        smallIcon as never,
+      );
+    }
+    log.child("window").info("window icon applied");
+  } catch (err) {
+    log.child("window").warn("window icon failed", err instanceof Error ? err.message : err);
+  }
 }
 
 /**
@@ -217,6 +284,24 @@ function loadWebKit() {
 function loadGlib() {
   return dlopen("libglib-2.0.so.0", {
     g_timeout_add: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+  });
+}
+
+function loadShell32() {
+  return dlopen("shell32.dll", {
+    ExtractIconExW: {
+      args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32],
+      returns: FFIType.u32,
+    },
+  });
+}
+
+function loadUser32() {
+  return dlopen("user32.dll", {
+    SendMessageW: {
+      args: [FFIType.ptr, FFIType.u32, FFIType.u64, FFIType.u64],
+      returns: FFIType.ptr,
+    },
   });
 }
 

@@ -60,7 +60,8 @@ export function applyCustomizations() {
             }
         });
 
-        observer.observe(document.body, { childList: true, subtree: true });
+        const body = document.body;
+        if (body) observer.observe(body, { childList: true, subtree: true });
     });
 }
 

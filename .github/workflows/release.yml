@@ -18,6 +18,8 @@ jobs:
   release:
     name: Semantic release
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,3 +63,86 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx --no-install semantic-release
+
+      # semantic-release tags the release commit; expose that tag so the
+      # Windows job can attach its assets to the same release. Empty when
+      # semantic-release decided there was nothing to release.
+      - name: Resolve released tag
+        id: tag
+        shell: bash
+        run: |
+          tag="$(git tag --points-at HEAD --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "released tag: ${tag:-(none — Windows job will be skipped)}"
+
+  windows:
+    name: Windows installer
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Windows-host build so the duck icon is embedded in the .exe.
+      - name: Build executable (windows x64)
+        run: bun run build:win:release
+
+      - name: Verify GUI subsystem (no console window)
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("dist/duckai.exe")
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+          Write-Host "PE subsystem: $subsystem (2 = GUI, 3 = console)"
+          if ($subsystem -ne 2) { throw "expected GUI subsystem (2), got $subsystem" }
+
+      # libwebview.dll links the MSVC 2015-2022 runtime dynamically; it is not
+      # part of Windows, so ship it beside the exe.
+      - name: Stage VC++ runtime
+        run: bun run stage:win-runtime
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore WiX (pinned in .config/dotnet-tools.json)
+        run: dotnet tool restore
+
+      - name: Build MSI installer
+        run: bun run build:msi
+
+      - name: Package portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/duckai.exe, dist/*.dll -DestinationPath dist/duckai-windows-x64.zip -Force
+
+      - name: Upload assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            dist/duckai-windows-x64.zip \
+            dist/duckai_*_x64.msi \
+            --clobber

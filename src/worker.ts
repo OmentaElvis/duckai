@@ -2,16 +2,17 @@
  * Webview worker: owns the window and the document-start injection.
  *
  * Runs `webview.run()` (which blocks this worker's event loop) and services the
- * page's `__harnessNativeCall` bind asynchronously via a GTK g_timeout_add poll.
- * The bindRaw callback returns void immediately (GTK unblocked); the poll delivers
- * completed responses via webview.return(seq, ...) from within the GTK main loop.
- * See ./ipc for the SharedArrayBuffer handshake protocol.
+ * page's `__harnessNativeCall` bind asynchronously through a native timer poll
+ * registered in that event loop (GLib on Linux, Win32 `SetTimer` on Windows).
+ * The bindRaw callback returns void immediately (the loop stays unblocked); the
+ * poll delivers completed responses via webview.return(seq, ...) from inside the
+ * loop. See ./ipc for the SharedArrayBuffer handshake protocol.
  */
 import { dlopen, FFIType, JSCallback } from "bun:ffi";
 import { SizeHint, Webview } from "webview-bun";
 import { readCachedHtml } from "./cache";
 import { INJECT_SCRIPT } from "./generated/inject-script";
-import { applyWindowTheme, loadHtmlWithBase, scheduleWindowNudge } from "./native";
+import { applyWindowIcon, applyWindowTheme, loadHtmlWithBase, scheduleWindowNudge } from "./native";
 import { log } from "./logging/host";
 import {
   IPC_CMD_INDEX,
@@ -55,23 +56,28 @@ applyWindowTheme(webview, {
   titlebarForeground: "#f2f2f2",
 });
 
+// Windows: webview does not assign a window icon, and --windows-icon only
+// brands the .exe file. Apply the same icon to the titlebar/taskbar.
+applyWindowIcon(webview);
+
 // Heal stale input regions / pointer focus once mapped (see native.ts).
 scheduleWindowNudge(webview);
 
 // --- Async harness bridge ---------------------------------------------------
 //
 // webview-bun's bind() callbacks can only return synchronously, which blocks
-// the GTK main loop for the entire tool call duration. We use bindRaw() instead:
-// the callback returns void immediately (GTK unblocked), and the response is
-// delivered later via webview.return(seq, ...) from a g_timeout_add poll that
-// runs inside webview.run()'s GTK main loop.
+// the platform event loop (GTK main loop / Win32 message loop) for the entire
+// tool call duration. We use bindRaw() instead: the callback returns void
+// immediately (loop unblocked), and the response is delivered later via
+// webview.return(seq, ...) from a timer poll (see registerAsyncPoll below) that
+// runs inside webview.run()'s event loop.
 //
 // Queue invariants:
 //   - pendingQueue  : requests waiting to enter the single SAB slot.
 //   - inFlight      : the one request currently occupying the SAB slot (null = slot free).
-//   - SAB transitions: IPC_IDLE → IPC_REQUEST (GTK poll) → IPC_RESPONSE (main thread) → IPC_IDLE (GTK poll).
-//   - GTK poll is the sole writer of IPC_IDLE; main thread is the sole writer of IPC_RESPONSE.
-//   - GTK poll is the sole consumer of IPC_RESPONSE; main thread is the sole consumer of IPC_REQUEST.
+//   - SAB transitions: IPC_IDLE → IPC_REQUEST (poll) → IPC_RESPONSE (main thread) → IPC_IDLE (poll).
+//   - The poll is the sole writer of IPC_IDLE; main thread is the sole writer of IPC_RESPONSE.
+//   - The poll is the sole consumer of IPC_RESPONSE; main thread is the sole consumer of IPC_REQUEST.
 
 interface Pending {
   seq: string;     // webview-bun native Promise handle — kept until webview.return() is called
@@ -110,7 +116,7 @@ function loadFromCacheOrNetwork(reason: "startup" | "reload"): void {
 }
 
 // bindRaw: seq keeps the page-side Promise open until webview.return(seq, ...) is called.
-// Returns void immediately — the GTK main loop is never blocked.
+// Returns void immediately — the event loop is never blocked.
 webview.bindRaw("__harnessNativeCall", (seq: string, rawReq: string) => {
   let payload: unknown;
   try {
@@ -121,12 +127,12 @@ webview.bindRaw("__harnessNativeCall", (seq: string, rawReq: string) => {
     return;
   }
   pendingQueue.push({ seq, payload });
-  // The GTK poll (registered below) will service this entry.
+  // The async poll (registered below) will service this entry.
 });
 
-// GTK poll: runs entirely on the GTK thread inside webview.run()'s g_main_loop.
-// It is safe to call webview.return() from here.
-// Returns 1 (G_SOURCE_CONTINUE) so GTK keeps the timer alive indefinitely.
+// Async poll: runs entirely on the UI thread inside webview.run()'s event loop,
+// so it is safe to call webview.return() from here. The numeric return value is
+// GLib's G_SOURCE_CONTINUE (1) and is ignored by the Windows TIMERPROC wrapper.
 function pollTick(_userData: unknown): number {
   // ── Step 1: deliver a completed response ──────────────────────────────────
   if (inFlight !== null && Atomics.load(control, 0) === IPC_RESPONSE) {
@@ -188,21 +194,79 @@ function pollTick(_userData: unknown): number {
   return 1; // G_SOURCE_CONTINUE
 }
 
-// Keep JSCallbacks alive: GTK holds a raw function pointer; GC would crash.
-// Same pattern as nudgeCallbacks in native.ts.
+// Keep JSCallbacks alive: the native timer holds a raw function pointer; GC
+// would crash. Same pattern as nudgeCallbacks in native.ts.
 const keepAliveCallbacks = new Set<JSCallback>();
 
-try {
-  const glib = dlopen("libglib-2.0.so.0", {
-    g_timeout_add: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-  });
-  const cb = new JSCallback(pollTick, { args: [FFIType.ptr], returns: FFIType.u32 });
-  keepAliveCallbacks.add(cb);
-  glib.symbols.g_timeout_add(8, cb.ptr, null); // 8 ms ≈ 120 Hz — imperceptible response latency
-} catch (err) {
-  // GLib unavailable (should not happen on Linux/GTK). Fall back to the original
-  // synchronous bridge so the app remains functional at the cost of ANR during long calls.
-  log.warn("g_timeout_add unavailable — falling back to synchronous bridge", err);
+/**
+ * Register the poll ticker with the platform's native event loop.
+ *
+ * - Linux:   GLib `g_timeout_add` — fires inside the GTK main loop.
+ * - Windows: Win32 `SetTimer` — fires inside the GetMessage/DispatchMessage
+ *            loop that `webview.run()` pumps.
+ *
+ * Returns true when an async timer was registered. On false the caller falls
+ * back to the synchronous bridge (functional, but blocks the loop per call).
+ * macOS and unknown platforms also return false until a native timer exists.
+ */
+function registerAsyncPoll(): boolean {
+  // ── Linux: GLib `g_timeout_add` ────────────────────────────────────────────
+  if (process.platform === "linux") {
+    try {
+      const glib = dlopen("libglib-2.0.so.0", {
+        g_timeout_add: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+      });
+      const cb = new JSCallback(pollTick, { args: [FFIType.ptr], returns: FFIType.u32 });
+      keepAliveCallbacks.add(cb);
+      glib.symbols.g_timeout_add(8, cb.ptr, null); // 8 ms ≈ 120 Hz — imperceptible latency
+      log.info("async poll: GLib g_timeout_add registered");
+      return true;
+    } catch (err) {
+      log.warn("GLib g_timeout_add unavailable", err);
+      return false;
+    }
+  }
+
+  // ── Windows: Win32 `SetTimer` ─────────────────────────────────────────────
+  if (process.platform === "win32") {
+    try {
+      // TIMERPROC: (HWND, UINT, UINT_PTR, DWORD) -> void. The arguments are
+      // ignored: the poll only needs to run on the UI thread, which SetTimer
+      // guarantees (the callback is invoked from DispatchMessage).
+      const timerProc = (_hwnd: unknown, _msg: unknown, _id: unknown, _time: unknown): void => {
+        pollTick(null);
+      };
+      const user32 = dlopen("user32.dll", {
+        // HWND, UINT_PTR (0 = new timer id), UINT (elapse ms), TIMERPROC
+        SetTimer: {
+          args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr],
+          returns: FFIType.ptr,
+        },
+      });
+      const cb = new JSCallback(timerProc, {
+        args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.u32],
+        returns: FFIType.void,
+      });
+      keepAliveCallbacks.add(cb);
+      const timerId = user32.symbols.SetTimer(null, null, 8, cb.ptr);
+      if (!timerId) {
+        log.warn("Win32 SetTimer returned 0 — falling back to synchronous bridge");
+        return false;
+      }
+      log.info("async poll: Win32 SetTimer registered");
+      return true;
+    } catch (err) {
+      log.warn("Win32 SetTimer unavailable", err);
+      return false;
+    }
+  }
+
+  return false;
+}
+
+if (!registerAsyncPoll()) {
+  // Fall back to the original synchronous bridge so the app remains functional
+  // at the cost of a UI stall (ANR) during long calls.
   webview.bind("__harnessNativeCall", (req: unknown): unknown => {
     if (Atomics.load(control, 0) !== IPC_IDLE) {
       return { ok: false, error: "harness host is busy" };

@@ -3,7 +3,13 @@
  * any application script. Exposes `window.__duckai_ext` for debugging in
  * devtools and announces readiness to the Bun host.
  */
-import type { ManagedTool, Permission, PermissionScope, ToolManifestEntry } from "../protocol";
+import type {
+  HostInfo,
+  ManagedTool,
+  Permission,
+  PermissionScope,
+  ToolManifestEntry,
+} from "../protocol";
 import type { HealthReport, HealthStatus } from "../health-report";
 import { VERSION } from "../version";
 import { callHarness, callHarnessSafe } from "./bridge";
@@ -21,6 +27,7 @@ import {
 } from "./reload-overlay";
 import { mountSettingsEntry } from "./settings-menu";
 import { log, type LogEntry } from "./log";
+import { whenDomReady } from "./dom";
 import { onSSEEvent } from "./sse";
 import { assistantElements, conversationIdOf, createToolUi, resumeToolHistory } from "./ui";
 import { getToolView, registerToolView, unregisterToolView } from "./tool-render";
@@ -37,6 +44,8 @@ type ExtGlobal = {
   callHarness: typeof callHarness;
   sse: { events: number; last: unknown };
   tools: ToolManifestEntry[];
+  /** Host OS + default shell, reported by the Bun side with the manifest. */
+  hostInfo?: HostInfo;
   /**
    * Register a custom summary/body view for a tool name. The stable interface
    * tools use to render rich output without touching duck.ai internals.
@@ -71,7 +80,11 @@ function readPageVersion(): { versionTag?: string; versionSha?: string } {
   return { versionTag, versionSha };
 }
 
-if (!window.__duckai_ext) {
+// Top frame only. WebView2 runs document-created scripts in every frame,
+// including sandboxed `about:srcdoc` documents whose `default-src 'none'` CSP
+// blocks our inline styles. Subframes also have no host bridge and would mount
+// a duplicate (broken) copy of the UI.
+if (window.top === window && !window.__duckai_ext) {
   const sseStats: ExtGlobal["sse"] = { events: 0, last: null };
 
   const ext: ExtGlobal = {
@@ -176,6 +189,7 @@ if (!window.__duckai_ext) {
     callTool: (name, args) => authorizeAndCall(name, args),
     onChat: (info) => noteFeVersion(info.feVersion),
     isHarnessEnabled,
+    getHostInfo: () => ext.hostInfo,
   });
 
   // Plugin health check. Runs once after the manifest loads (deep, including a
@@ -280,15 +294,18 @@ if (!window.__duckai_ext) {
       }
     }, 250);
   };
-  try {
-    new MutationObserver(scheduleResume).observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-  } catch (err) {
-    log.warn("tool history observer failed", String(err));
-  }
-  scheduleResume();
+  // documentElement may not exist yet under WebView2 (see ./dom).
+  whenDomReady(() => {
+    try {
+      new MutationObserver(scheduleResume).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    } catch (err) {
+      log.warn("tool history observer failed", String(err));
+    }
+    scheduleResume();
+  });
 
   // Keep our sidecar tool history in sync when a chat is deleted: duck.ai keeps
   // conversations in IndexedDB, so we drop history for ids it no longer has
@@ -487,10 +504,18 @@ if (!window.__duckai_ext) {
   // Load the custom-tool manifest; tools stay disabled until it arrives.
   void (async () => {
     try {
-      const manifest = (await callHarness("manifest")) as ToolManifestEntry[];
+      // Wire shape is `{ tools, hostInfo }`; accept a bare array too so an older
+      // host build still works with a newer injected script (and vice versa).
+      const manifestRes = (await callHarness("manifest")) as
+        | { tools: ToolManifestEntry[]; hostInfo?: HostInfo }
+        | ToolManifestEntry[];
+      const manifest = Array.isArray(manifestRes) ? manifestRes : manifestRes.tools;
+      const hostInfo = Array.isArray(manifestRes) ? undefined : manifestRes.hostInfo;
       if (Array.isArray(manifest)) {
         ext.tools = manifest;
+        ext.hostInfo = hostInfo;
         log.info(`tool manifest loaded: ${manifest.map((t) => t.name).join(", ") || "(none)"}`);
+        if (hostInfo) log.info(`host environment: ${hostInfo.os} · shell: ${hostInfo.shell}`);
       }
     } catch (err) {
       log.warn("manifest load failed", String(err));

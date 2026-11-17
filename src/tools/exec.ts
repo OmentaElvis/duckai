@@ -19,11 +19,57 @@ function parseCommandBinaries(command: string): string[] {
   return [...binaries];
 }
 
+/**
+ * Spawn the platform-appropriate shell for the given command string.
+ * - Linux / macOS: bash -c <command>
+ * - Windows: pwsh -Command <command>, falling back to Windows PowerShell 5
+ *   (powershell -Command) and finally cmd /C <command>.
+ */
+async function spawnShell(
+  command: string,
+  cwd: string,
+  env: typeof process.env,
+): Promise<ReturnType<typeof Bun.spawn>> {
+  if (process.platform === "win32") {
+    // Prefer PowerShell 7+ (pwsh); fall back to Windows PowerShell 5 (powershell),
+    // then cmd.exe as a last resort.
+    const candidates: [string, string, string][] = [
+      ["pwsh", "-Command", command],
+      ["powershell", "-Command", command],
+      ["cmd", "/C", command],
+    ];
+    let lastErr: unknown;
+    for (const [bin, flag, cmd] of candidates) {
+      try {
+        return Bun.spawn([bin, flag, cmd], {
+          cwd,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+          // The app is a GUI-subsystem executable; without this every command
+          // flashes a console window before its output is captured.
+          windowsHide: true,
+        });
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  }
+  return Bun.spawn(["bash", "-c", command], { cwd, env, stdout: "pipe", stderr: "pipe" });
+}
+
+/** Human-readable shell label used in the tool description. */
+const SHELL_LABEL =
+  process.platform === "win32"
+    ? "PowerShell (pwsh / powershell) or cmd.exe"
+    : "bash";
+
 export const runCommandTool: Tool = {
   name: "run_command",
   permission: "ask",
   description:
-    "Execute a shell command on the local machine. Runs inside bash with timeout enforcement and captured stdout/stderr.",
+    `Execute a shell command on the local machine. Runs inside ${SHELL_LABEL} with timeout enforcement and captured stdout/stderr.`,
   permissionScopes: (args) => {
     const cmd = typeof args.command === "string" ? args.command.trim() : "";
     if (!cmd) {
@@ -82,12 +128,7 @@ export const runCommandTool: Tool = {
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(["bash", "-c", command], {
-        cwd,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      proc = await spawnShell(command, cwd, process.env);
     } catch (err) {
       return { error: `Failed to spawn command: ${err instanceof Error ? err.message : String(err)}` };
     }

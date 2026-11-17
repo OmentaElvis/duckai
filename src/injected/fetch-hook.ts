@@ -11,7 +11,7 @@
  * Requests that are not duck.ai chat POSTs (or that we cannot safely rewrite)
  * fall back to pure observation.
  */
-import { renderToolInstructions, type ToolManifestEntry } from "../protocol";
+import { renderToolInstructions, type HostInfo, type ToolManifestEntry } from "../protocol";
 import { createChatStream, type SupervisorDeps } from "./chat-supervisor";
 import { log as rootLog } from "./log";
 import { prepareMessages, sanitizeMessages, type WireMessage } from "./messages";
@@ -49,6 +49,11 @@ export interface FetchHookOptions {
   onChat?: (info: { feVersion?: string }) => void;
   /** Whether the DuckAI harness is active for this chat session (defaults to true). */
   isHarnessEnabled?: () => boolean;
+  /**
+   * Returns the host OS info reported by the Bun side. Read lazily because the
+   * manifest (and therefore host info) arrives after the hook is installed.
+   */
+  getHostInfo?: () => HostInfo | undefined;
 }
 
 function urlOf(input: RequestInfo | URL): string {
@@ -172,7 +177,7 @@ export function installFetchHook(opts: FetchHookOptions = {}): void {
     // and advertise our tools through the request's own `tools` field so the
     // model can call them via its native function-calling channel.
     const requestHeaders = headersOf(input, init);
-    const instructions = renderToolInstructions(manifest);
+    const instructions = renderToolInstructions(manifest, opts.getHostInfo?.());
     let messages = sanitizeMessages(rawMessages);
     messages = prepareMessages(messages, instructions);
 

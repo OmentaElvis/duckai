@@ -157,6 +157,8 @@ export const grepSearchTool: Tool = {
       const proc = Bun.spawn(rgArgs, {
         stdout: "pipe",
         stderr: "pipe",
+        // Avoid a console flash from the GUI executable on Windows.
+        windowsHide: true,
       });
       const stdout = proc.stdout ? await new Response(proc.stdout as BodyInit).text() : "";
       const exitCode = await proc.exited;
