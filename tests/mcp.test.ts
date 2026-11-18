@@ -225,8 +225,325 @@ describe("mcp gateway", () => {
 
       await handleHarnessCall({ method: "mcpDelete", params: { name: "gmail" } });
       expect(loadAllMcpServers().gmail).toBeUndefined();
+
+      // Remote servers: headers are secret too, and type/url round-trip.
+      const remote = (await handleHarnessCall({
+        method: "mcpUpsert",
+        params: {
+          name: "web",
+          type: "http",
+          url: "https://example.test/mcp",
+          headers: { Authorization: "Bearer topsecret" },
+        },
+      })) as { ok: boolean; result: Array<{ name: string; type: string; url: string; headerKeys: string[] }> };
+      expect(remote.ok).toBe(true);
+      expect(remote.result[0]).toMatchObject({
+        name: "web",
+        type: "http",
+        url: "https://example.test/mcp",
+        headerKeys: ["Authorization"],
+      });
+      expect(JSON.stringify(remote.result)).not.toContain("topsecret");
+
+      // Editing without headers preserves the stored token.
+      await handleHarnessCall({ method: "mcpUpsert", params: { name: "web", type: "http", url: "https://example.test/mcp2" } });
+      expect(loadAllMcpServers().web?.headers).toEqual({ Authorization: "Bearer topsecret" });
+      expect(loadAllMcpServers().web?.url).toBe("https://example.test/mcp2");
     } finally {
       process.env.DUCKAI_MCP_CONFIG_PATH = saved;
     }
+  });
+});
+
+// --- HTTP transports ------------------------------------------------------
+//
+// Exercises Streamable HTTP (JSON + SSE responses, session header, bearer
+// auth, session expiry recovery) and the legacy HTTP+SSE transport against an
+// in-process server, so no external binaries are needed.
+
+describe("mcp http transports", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let remoteConfig = "";
+  let httpDir = "";
+  let savedConfig: string | undefined;
+  const clients = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+  const expiring = new Set<string>();
+  let sessionSeq = 0;
+  const seen = {
+    auth: [] as string[],
+    sessions: [] as string[],
+    protocolVersions: [] as string[],
+  };
+
+  const enc = new TextEncoder();
+  const sseFrame = (data: unknown): Uint8Array =>
+    enc.encode(`event: message\ndata: ${JSON.stringify(data)}\n\n`);
+
+  const sseResponse = (frames: unknown[]): Response => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(sseFrame(frame));
+        controller.close();
+      },
+    });
+    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  };
+
+  const json = (value: unknown, headers: Record<string, string> = {}): Response =>
+    Response.json(value, { headers });
+
+  beforeAll(() => {
+    httpDir = join(tmpdir(), `duckai-mcp-http-test-${Date.now()}`);
+    mkdirSync(httpDir, { recursive: true });
+    server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const url = new URL(req.url);
+        const auth = req.headers.get("authorization") ?? "";
+        seen.auth.push(auth);
+        if (auth !== "Bearer test-token") {
+          return new Response("unauthorized", { status: 401 });
+        }
+
+        if (url.pathname === "/mcp") {
+          if (req.method === "GET") return new Response("no push", { status: 405 });
+          if (req.method === "DELETE") return new Response(null, { status: 204 });
+          if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+
+          const message = (await req.json()) as {
+            id?: number;
+            method?: string;
+            params?: { name?: string; arguments?: Record<string, unknown> };
+          };
+          if (message.id === undefined) return new Response(null, { status: 202 });
+
+          if (message.method === "initialize") {
+            const session = `sess-${++sessionSeq}`;
+            return json(
+              {
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  protocolVersion: "2025-06-18",
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "http-fake", version: "1" },
+                },
+              },
+              { "Mcp-Session-Id": session },
+            );
+          }
+
+          const session = req.headers.get("mcp-session-id") ?? "";
+          seen.sessions.push(session);
+          seen.protocolVersions.push(req.headers.get("mcp-protocol-version") ?? "");
+          if (!session) return new Response("missing session", { status: 400 });
+          if (expiring.delete(session)) return new Response("expired", { status: 404 });
+
+          if (message.method === "tools/list") {
+            return sseResponse([
+              { jsonrpc: "2.0", method: "notifications/tools/list_changed" },
+              {
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  tools: [
+                    {
+                      name: "remote_echo",
+                      description: "Echo over HTTP",
+                      inputSchema: { type: "object", properties: { text: { type: "string" } } },
+                    },
+                    { name: "remote_fail", description: "Fails over HTTP", inputSchema: { type: "object" } },
+                  ],
+                },
+              },
+            ]);
+          }
+          if (message.method === "tools/call") {
+            if (message.params?.name === "remote_echo") {
+              return json({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: { content: [{ type: "text", text: `http:${message.params.arguments?.text ?? ""}` }] },
+              });
+            }
+            return json({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { content: [{ type: "text", text: "http boom" }], isError: true },
+            });
+          }
+          return json({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "method not found" } });
+        }
+
+        if (url.pathname === "/sse" && req.method === "GET") {
+          const session = `sse-${++sessionSeq}`;
+          let controller!: ReadableStreamDefaultController<Uint8Array>;
+          const body = new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              c.enqueue(enc.encode(`event: endpoint\ndata: /messages?session=${session}\n\n`));
+            },
+          });
+          clients.set(session, controller);
+          return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+        }
+
+        if (url.pathname === "/messages" && req.method === "POST") {
+          const session = url.searchParams.get("session") ?? "";
+          const controller = clients.get(session);
+          if (!controller) return new Response("unknown session", { status: 404 });
+          const message = (await req.json()) as {
+            id?: number;
+            method?: string;
+            params?: { name?: string; arguments?: Record<string, unknown> };
+          };
+          if (message.id === undefined) return new Response(null, { status: 202 });
+          if (message.method === "initialize") {
+            controller.enqueue(
+              sseFrame({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "sse-fake", version: "1" },
+                },
+              }),
+            );
+          } else if (message.method === "tools/list") {
+            controller.enqueue(
+              sseFrame({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  tools: [
+                    {
+                      name: "legacy_echo",
+                      description: "Echo over SSE",
+                      inputSchema: { type: "object", properties: { text: { type: "string" } } },
+                    },
+                  ],
+                },
+              }),
+            );
+          } else if (message.method === "tools/call") {
+            controller.enqueue(
+              sseFrame({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: { content: [{ type: "text", text: `sse:${message.params?.arguments?.text ?? ""}` }] },
+              }),
+            );
+          }
+          return new Response(null, { status: 202 });
+        }
+
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    remoteConfig = join(httpDir, "http-mcp.json");
+    writeFileSync(
+      remoteConfig,
+      JSON.stringify({
+        mcpServers: {
+          // No `type` on purpose: a bare `url` implies Streamable HTTP.
+          stream: {
+            url: `http://127.0.0.1:${server.port}/mcp`,
+            headers: { Authorization: "Bearer test-token" },
+          },
+          badtoken: {
+            type: "http",
+            url: `http://127.0.0.1:${server.port}/mcp`,
+            headers: { Authorization: "Bearer wrong" },
+          },
+          legacy: {
+            type: "sse",
+            url: `http://127.0.0.1:${server.port}/sse`,
+            headers: { Authorization: "Bearer test-token" },
+          },
+        },
+      }),
+    );
+    savedConfig = process.env.DUCKAI_MCP_CONFIG_PATH;
+    process.env.DUCKAI_MCP_CONFIG_PATH = remoteConfig;
+  });
+
+  afterAll(() => {
+    closeAllMcpClients();
+    for (const controller of clients.values()) {
+      try {
+        controller.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    clients.clear();
+    server.stop(true);
+    rmSync(httpDir, { recursive: true, force: true });
+    if (savedConfig === undefined) delete process.env.DUCKAI_MCP_CONFIG_PATH;
+    else process.env.DUCKAI_MCP_CONFIG_PATH = savedConfig;
+  });
+
+  test("Streamable HTTP lists and calls tools over JSON and SSE responses", async () => {
+    const listed = (await executeTool("mcp_tools", { server: "stream" })) as string;
+    expect(listed).toContain("stream tools (2):");
+    expect(listed).toContain("remote_echo");
+    expect(listed).toContain("remote_fail");
+
+    const ok = (await executeTool("mcp_call", {
+      server: "stream",
+      tool: "remote_echo",
+      arguments: { text: "hi" },
+    })) as { text?: string };
+    expect(ok).toEqual({ text: "http:hi" });
+
+    const bad = (await executeTool("mcp_call", {
+      server: "stream",
+      tool: "remote_fail",
+      arguments: {},
+    })) as { error?: string };
+    expect(bad.error).toContain("http boom");
+
+    // Auth, session and negotiated protocol version reached the server.
+    expect(seen.auth).toContain("Bearer test-token");
+    expect(seen.sessions.length).toBeGreaterThan(0);
+    expect(seen.sessions.every((session) => session.startsWith("sess-"))).toBe(true);
+    expect(seen.protocolVersions).toContain("2025-06-18");
+  });
+
+  test("Streamable HTTP surfaces auth failures", async () => {
+    const res = (await executeTool("mcp_tools", { server: "badtoken" })) as { error?: string };
+    expect(res.error).toContain("401");
+    expect(res.error).toContain("auth token");
+  });
+
+  test("expired HTTP sessions re-initialize and retry", async () => {
+    // Warm the client so tools/list is cached and the next call goes straight
+    // to tools/call. Then expire its session server-side.
+    await executeTool("mcp_tools", { server: "stream" });
+    const session = seen.sessions.at(-1)!;
+    expiring.add(session);
+    const ok = (await executeTool("mcp_call", {
+      server: "stream",
+      tool: "remote_echo",
+      arguments: { text: "again" },
+    })) as { text?: string };
+    expect(ok).toEqual({ text: "http:again" });
+    // Recovery initialized a fresh session.
+    expect(seen.sessions.at(-1)).not.toBe(session);
+  });
+
+  test("legacy HTTP+SSE lists and calls tools", async () => {
+    const listed = (await executeTool("mcp_tools", { server: "legacy" })) as string;
+    expect(listed).toContain("legacy tools (1):");
+    expect(listed).toContain("legacy_echo");
+
+    const ok = (await executeTool("mcp_call", {
+      server: "legacy",
+      tool: "legacy_echo",
+      arguments: { text: "there" },
+    })) as { text?: string };
+    expect(ok).toEqual({ text: "sse:there" });
   });
 });

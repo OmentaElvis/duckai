@@ -21,20 +21,29 @@ export interface ToolsUi {
   destroy(): void;
 }
 
+export type McpTransportKind = "stdio" | "http" | "sse";
+
 export interface McpServerUi {
   name: string;
+  type: McpTransportKind;
   command: string;
   args: string[];
+  url: string;
   enabled: boolean;
   envKeys: string[];
+  headerKeys: string[];
 }
 
 export interface McpUpsert {
   name: string;
-  command: string;
+  type: McpTransportKind;
+  command?: string;
   args: string[];
   /** Omit to preserve existing env values. */
   env?: Record<string, string>;
+  url?: string;
+  /** Omit to preserve existing header values. */
+  headers?: Record<string, string>;
   enabled: boolean;
 }
 
@@ -72,7 +81,8 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
     .mcp-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; }
     .mcp-head .title { font-weight: 600; flex: 1 1 auto; }
     .mcp-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-    .mcp-form input[type=text], .mcp-form textarea {
+    .mcp-form .mcp-fields { display: flex; flex-direction: column; gap: 6px; }
+    .mcp-form input[type=text], .mcp-form textarea, .mcp-form select {
       font: inherit; padding: 4px 8px; border-radius: 7px; width: 100%; box-sizing: border-box;
       border: 1px solid var(--h-border); background: transparent; color: inherit;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
@@ -116,18 +126,33 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
   let mcpStatus: HTMLElement | null = null;
   let editing: string | null = null;
   let nameInput: HTMLInputElement | null = null;
+  let typeSelect: HTMLSelectElement | null = null;
   let cmdInput: HTMLInputElement | null = null;
   let argsInput: HTMLInputElement | null = null;
   let envInput: HTMLTextAreaElement | null = null;
+  let urlInput: HTMLInputElement | null = null;
+  let headersInput: HTMLTextAreaElement | null = null;
+  let stdioFields: HTMLElement | null = null;
+  let remoteFields: HTMLElement | null = null;
   let enabledInput: HTMLInputElement | null = null;
+
+  const updateMcpFields = (): void => {
+    const type = typeSelect?.value ?? "stdio";
+    if (stdioFields) stdioFields.style.display = type === "stdio" ? "" : "none";
+    if (remoteFields) remoteFields.style.display = type === "stdio" ? "none" : "";
+  };
 
   const clearMcpForm = (): void => {
     editing = null;
     if (nameInput) { nameInput.value = ""; nameInput.disabled = false; }
+    if (typeSelect) typeSelect.value = "stdio";
     if (cmdInput) cmdInput.value = "";
     if (argsInput) argsInput.value = "";
     if (envInput) envInput.value = "";
+    if (urlInput) urlInput.value = "";
+    if (headersInput) headersInput.value = "";
     if (enabledInput) enabledInput.checked = true;
+    updateMcpFields();
   };
 
   if (hasMcp) {
@@ -148,6 +173,18 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
     nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.placeholder = "name (e.g. gmail)";
+    typeSelect = document.createElement("select");
+    for (const [value, label] of [
+      ["stdio", "stdio (local command)"],
+      ["http", "http (Streamable HTTP)"],
+      ["sse", "sse (legacy HTTP+SSE)"],
+    ] as const) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      typeSelect.append(option);
+    }
+    typeSelect.addEventListener("change", updateMcpFields);
     cmdInput = document.createElement("input");
     cmdInput.type = "text";
     cmdInput.placeholder = "command (e.g. uvx)";
@@ -156,6 +193,19 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
     argsInput.placeholder = "args, space-separated (e.g. mcp-server-gmail)";
     envInput = document.createElement("textarea");
     envInput.placeholder = "env, one KEY=VALUE per line (optional)";
+    stdioFields = document.createElement("div");
+    stdioFields.className = "mcp-fields";
+    stdioFields.append(cmdInput, argsInput, envInput);
+    urlInput = document.createElement("input");
+    urlInput.type = "text";
+    urlInput.placeholder = "URL (e.g. http://127.0.0.1:3000/mcp)";
+    headersInput = document.createElement("textarea");
+    headersInput.placeholder =
+      "headers, one Name: Value per line (optional)\ne.g. Authorization: Bearer YOUR_TOKEN";
+    remoteFields = document.createElement("div");
+    remoteFields.className = "mcp-fields";
+    remoteFields.append(urlInput, headersInput);
+    remoteFields.style.display = "none";
     const actions = document.createElement("div");
     actions.className = "mcp-actions";
     const enabledWrap = document.createElement("label");
@@ -172,12 +222,12 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
     newBtn.className = "btn";
     newBtn.textContent = "New";
     actions.append(enabledWrap, saveBtn, newBtn);
-    form.append(nameInput, cmdInput, argsInput, envInput, actions);
+    form.append(nameInput, typeSelect, stdioFields, remoteFields, actions);
 
     const mcpFooter = document.createElement("div");
     mcpFooter.className = "footer";
     mcpFooter.textContent =
-      "MCP servers run as local processes with your privileges — only add commands you trust. Env values are stored locally and never shown here.";
+      "stdio servers run as local processes with your privileges; http/sse servers are contacted over the network with the headers you provide. Only add servers you trust. Secret values are stored locally and never shown here.";
 
     modal.card.append(mcpHead, mcpListEl, form, mcpFooter);
 
@@ -196,6 +246,21 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
         const idx = t.indexOf("=");
         if (idx <= 0) continue;
         out[t.slice(0, idx).trim()] = t.slice(idx + 1);
+      }
+      return out;
+    };
+
+    /** Accept both `Name: Value` (HTTP headers) and `NAME=VALUE`. */
+    const parseHeaders = (s: string): Record<string, string> => {
+      const out: Record<string, string> = {};
+      for (const line of s.split("\n")) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const colon = t.indexOf(":");
+        const equals = t.indexOf("=");
+        const idx = colon >= 0 && (equals < 0 || colon < equals) ? colon : equals;
+        if (idx <= 0) continue;
+        out[t.slice(0, idx).trim()] = t.slice(idx + 1).trim();
       }
       return out;
     };
@@ -226,8 +291,13 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
         nm.textContent = srv.name;
         const desc = document.createElement("div");
         desc.className = "desc";
-        desc.textContent = [srv.command, ...srv.args].join(" ") +
-          (srv.envKeys.length ? `  · env: ${srv.envKeys.join(", ")}` : "");
+        const secretKeys = [...srv.envKeys, ...srv.headerKeys];
+        const detail =
+          srv.type === "stdio"
+            ? [srv.command, ...srv.args].join(" ")
+            : srv.url;
+        desc.textContent = `${srv.type} · ${detail}` +
+          (secretKeys.length ? `  · secrets: ${secretKeys.join(", ")}` : "");
         info.append(nm, desc);
         const editBtn = document.createElement("button");
         editBtn.type = "button";
@@ -236,12 +306,16 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
         editBtn.addEventListener("click", () => {
           editing = srv.name;
           if (nameInput) { nameInput.value = srv.name; nameInput.disabled = true; }
+          if (typeSelect) typeSelect.value = srv.type;
           if (cmdInput) cmdInput.value = srv.command;
           if (argsInput) argsInput.value = srv.args.join(" ");
-          // Leave env blank on edit to preserve stored secrets.
+          // Leave env/headers blank on edit to preserve stored secrets.
           if (envInput) envInput.value = "";
+          if (urlInput) urlInput.value = srv.url;
+          if (headersInput) headersInput.value = "";
           if (enabledInput) enabledInput.checked = srv.enabled;
-          setMcpStatus(`editing ${srv.name} (env preserved unless retyped)`);
+          updateMcpFields();
+          setMcpStatus(`editing ${srv.name} (secrets preserved unless retyped)`);
         });
         const delBtn = document.createElement("button");
         delBtn.type = "button";
@@ -270,12 +344,18 @@ export function mountToolsUi(opts: ToolsUiOptions): ToolsUi {
 
     saveBtn.addEventListener("click", () => {
       const name = nameInput?.value.trim() ?? "";
+      const type = (typeSelect?.value ?? "stdio") as McpTransportKind;
       const command = cmdInput?.value.trim() ?? "";
-      if (!name || !command) { setMcpStatus("name and command required"); return; }
+      const url = urlInput?.value.trim() ?? "";
+      if (!name) { setMcpStatus("name required"); return; }
+      if (type === "stdio" && !command) { setMcpStatus("command required"); return; }
+      if (type !== "stdio" && !url) { setMcpStatus("URL required"); return; }
       const envText = envInput?.value ?? "";
       const env = envText.trim() ? parseEnv(envText) : undefined;
+      const headersText = headersInput?.value ?? "";
+      const headers = headersText.trim() ? parseHeaders(headersText) : undefined;
       void opts.upsertMcp?.({
-        name, command, args: parseArgs(argsInput?.value ?? ""), env,
+        name, type, command, args: parseArgs(argsInput?.value ?? ""), env, url, headers,
         enabled: enabledInput?.checked ?? true,
       }).then((updated) => { renderMcp(updated); clearMcpForm(); })
         .catch(() => setMcpStatus("save failed"));

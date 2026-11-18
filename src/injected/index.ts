@@ -17,7 +17,7 @@ import { installFetchHook } from "./fetch-hook";
 import { noteEvent, noteFeVersion, runHealthChecks, type HealthOptions } from "./health";
 import { mountApprovalUi, type ApprovalAnswer } from "./approval-ui";
 import { mountHealthUi, type HealthUi } from "./health-ui";
-import { mountToolsUi, type ToolsUi } from "./tools-ui";
+import { mountToolsUi, type McpServerUi, type McpUpsert, type ToolsUi } from "./tools-ui";
 import { mountUpdateBanner } from "./update-banner";
 import {
   clearReloadMarker,
@@ -235,21 +235,13 @@ if (window.top === window && !window.__duckai_ext) {
       callHarness("setToolEnabled", { name, enabled }) as Promise<ManagedTool[]>,
     setPermission: (name, level) =>
       callHarness("setPermission", { name, level }) as Promise<ManagedTool[]>,
-    loadMcp: () => callHarness("mcpServers") as Promise<
-      Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
-    >,
-    upsertMcp: (server) =>
-      callHarness("mcpUpsert", server) as Promise<
-        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
-      >,
+    loadMcp: () => callHarness("mcpServers") as Promise<McpServerUi[]>,
+    upsertMcp: (server: McpUpsert) =>
+      callHarness("mcpUpsert", server) as Promise<McpServerUi[]>,
     deleteMcp: (name) =>
-      callHarness("mcpDelete", { name }) as Promise<
-        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
-      >,
+      callHarness("mcpDelete", { name }) as Promise<McpServerUi[]>,
     setMcpEnabled: (name, enabled) =>
-      callHarness("mcpSetEnabled", { name, enabled }) as Promise<
-        Array<{ name: string; command: string; args: string[]; enabled: boolean; envKeys: string[] }>
-      >,
+      callHarness("mcpSetEnabled", { name, enabled }) as Promise<McpServerUi[]>,
     onChange: (tools) => {
       ext.tools = tools.filter((t) => t.enabled);
     },

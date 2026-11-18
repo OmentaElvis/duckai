@@ -97,6 +97,37 @@ Everything is client-side: it is a textual contract between the model and a loca
   </tr>
 </table>
 
+### MCP servers
+
+MCP servers are configured in `~/.duckai/mcp.json` (or `$DUCKAI_MCP_CONFIG_PATH`) and can also be added from **Manage tools → MCP servers**. Local stdio servers and remote HTTP servers are both supported:
+
+```jsonc
+{
+  "servers": {
+    "time": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-time"]
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    },
+    "legacy": {
+      "type": "sse",
+      "url": "http://127.0.0.1:8000/sse",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+- **`stdio`** spawns `command`/`args` locally and passes `env` to the process.
+- **`http`** uses MCP's Streamable HTTP transport: a single POST endpoint that answers with JSON or SSE, `Mcp-Session-Id` handling (including re-initializing expired sessions) and an optional server push stream for `tools/list_changed`. `type` can be omitted when an entry only sets `url`.
+- **`sse`** is the older HTTP+SSE transport, for servers that expose an event stream plus a separate message endpoint.
+- **`headers`** carry auth tokens (`Authorization: Bearer …`) and any other required HTTP headers. Env and header values stay on the host: the management UI only ever receives their names.
+
 ## Permissions
 
 Tools default to `ask`, so a new or sensitive tool never runs silently. Requests appear inline above the prompt bar: allow once, reject (optionally with instructions the model can act on), or grant a scoped "always allow" for the session.

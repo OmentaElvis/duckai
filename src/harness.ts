@@ -421,18 +421,24 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
       case "mcpUpsert": {
         const p = params as {
           name?: string;
+          type?: "stdio" | "http" | "sse";
           command?: string;
           args?: string[];
           env?: Record<string, string>;
+          url?: string;
+          headers?: Record<string, string>;
           enabled?: boolean;
         };
-        if (!p?.name?.trim() || !p?.command?.trim()) return { ok: false, error: "name and command required" };
+        if (!p?.name?.trim()) return { ok: false, error: "name required" };
         try {
           upsertMcpServer({
             name: p.name,
+            type: p.type,
             command: p.command,
             args: p.args,
             env: p.env,
+            url: p.url,
+            headers: p.headers,
             enabled: p.enabled,
           });
           return { ok: true, result: listMcpServersForUi() };
