@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/OmentaElvis/duckai/compare/v1.2.0...v1.3.0) (2026-11-18)
+
+
+### Features
+
+* **mcp:** implement streamable http mcp client ([9e13af2](https://github.com/OmentaElvis/duckai/commit/9e13af2778262ce7cce4f8d251af690e048d1d4b))
+
 # [1.2.0](https://github.com/OmentaElvis/duckai/compare/v1.1.0...v1.2.0) (2026-11-17)
 
 
