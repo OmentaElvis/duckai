@@ -28,12 +28,6 @@ export function applyCustomizations() {
                 letter-spacing: 0.3px !important;
             }
 
-            /* Make text more visible */
-            [data-streamdown="code-block-body"] code span {
-                opacity: 1 !important;
-                color: inherit !important;
-            }
-
             /* Better contrast for dark mode */
             .dark [data-streamdown="code-block-body"] code {
                 background-color: #1e1e1e !important;
