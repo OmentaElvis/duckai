@@ -12,6 +12,8 @@
  * fires after the window is mapped.
  */
 import { dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { log } from "./logging/host";
 
 const cstr = (s: string): Pointer => ptr(new TextEncoder().encode(`${s}\0`));
@@ -51,10 +53,13 @@ export interface NativeWindow {
  * `webview` creates its window with no icon, so Windows draws its default
  * placeholder in the titlebar and falls back to the process icon in the
  * taskbar. `bun build --windows-icon` only brands the `.exe` file itself, so
- * the running window must be told explicitly. `ExtractIconExW` pulls icon
- * index 0 — the same icon Explorer shows — out of the executable, so this works
- * for a portable exe with no extra files. Best-effort; never throws. No-op on
- * non-Windows platforms.
+ * the running window must be told explicitly.
+ *
+ * We query per-monitor DPI to extract exact crisp dimensions matching the
+ * display scaling (via `PrivateExtractIconsW`) rather than legacy fixed 32/16
+ * metrics from `ExtractIconExW`. Both window instance and class icons are set,
+ * and the process AppUserModelID is registered so taskbar grouping matches.
+ * Best-effort; never throws. No-op on non-Windows platforms.
  */
 export function applyWindowIcon(webview: NativeWindow): void {
   if (process.platform !== "win32") return;
@@ -64,40 +69,112 @@ export function applyWindowIcon(webview: NativeWindow): void {
   try {
     const shell32 = loadShell32();
     const user32 = loadUser32();
+    const dpiLib = loadUser32Dpi();
 
-    const large = new BigUint64Array(1);
-    const small = new BigUint64Array(1);
-    const count = shell32.symbols.ExtractIconExW(
-      wstr(process.execPath),
-      0,
-      ptr(large),
-      ptr(small),
-      1,
-    ) as unknown as number;
+    let dpi = 96;
+    try {
+      dpi = dpiLib?.symbols.GetDpiForWindow(hwnd as never) || 96;
+    } catch {}
 
-    if (!count) {
-      log.child("window").warn("window icon: executable contains no icon");
+    let cxSmall = 16;
+    let cySmall = 16;
+    let cxLarge = 32;
+    let cyLarge = 32;
+
+    if (dpiLib && dpi > 96) {
+      try {
+        cxSmall = dpiLib.symbols.GetSystemMetricsForDpi(49, dpi);
+        cySmall = dpiLib.symbols.GetSystemMetricsForDpi(50, dpi);
+        cxLarge = dpiLib.symbols.GetSystemMetricsForDpi(11, dpi);
+        cyLarge = dpiLib.symbols.GetSystemMetricsForDpi(12, dpi);
+      } catch {}
+    } else {
+      try {
+        cxSmall = user32.symbols.GetSystemMetrics(49);
+        cySmall = user32.symbols.GetSystemMetrics(50);
+        cxLarge = user32.symbols.GetSystemMetrics(11);
+        cyLarge = user32.symbols.GetSystemMetrics(12);
+      } catch {}
+    }
+
+    const hiconLarge = new BigUint64Array(1);
+    const hiconSmall = new BigUint64Array(1);
+    const iconId = new Uint32Array(1);
+
+    const tryExtract = (targetPath: string) => {
+      const p = wstr(targetPath);
+      // For large icons (taskbar & Alt-Tab), request at least 48px so Windows
+      // downsamples from a crisp frame rather than upscaling 32px.
+      const l = user32.symbols.PrivateExtractIconsW(
+        p,
+        0,
+        Math.max(cxLarge, 48),
+        Math.max(cyLarge, 48),
+        ptr(hiconLarge),
+        ptr(iconId),
+        1,
+        0,
+      ) as unknown as number;
+      const s = user32.symbols.PrivateExtractIconsW(
+        p,
+        0,
+        cxSmall,
+        cySmall,
+        ptr(hiconSmall),
+        ptr(iconId),
+        1,
+        0,
+      ) as unknown as number;
+      return l > 0 || s > 0;
+    };
+
+    let extracted = tryExtract(process.execPath);
+    if (!extracted) {
+      const candidates = [
+        join(dirname(process.execPath), "duckai.ico"),
+        join(dirname(process.execPath), "assets", "duckai.ico"),
+        join(process.cwd(), "assets", "duckai.ico"),
+      ];
+      for (const cand of candidates) {
+        if (existsSync(cand) && tryExtract(cand)) {
+          extracted = true;
+          break;
+        }
+      }
+    }
+
+    if (!extracted) {
+      log.child("window").warn("window icon: executable or assets contain no icon");
       return;
     }
 
     const WM_SETICON = 0x0080;
     const ICON_BIG = 1;
     const ICON_SMALL = 0;
+    const GCLP_HICON = -14;
+    const GCLP_HICONSM = -34;
 
-    const big = large[0];
-    const smallIcon = small[0];
+    const big = hiconLarge[0];
+    const small = hiconSmall[0];
+
     if (big) {
       user32.symbols.SendMessageW(hwnd as never, WM_SETICON, ICON_BIG as never, big as never);
+      try {
+        user32.symbols.SetClassLongPtrW(hwnd as never, GCLP_HICON, big as never);
+      } catch {}
     }
-    if (smallIcon) {
-      user32.symbols.SendMessageW(
-        hwnd as never,
-        WM_SETICON,
-        ICON_SMALL as never,
-        smallIcon as never,
-      );
+    if (small) {
+      user32.symbols.SendMessageW(hwnd as never, WM_SETICON, ICON_SMALL as never, small as never);
+      try {
+        user32.symbols.SetClassLongPtrW(hwnd as never, GCLP_HICONSM, small as never);
+      } catch {}
     }
-    log.child("window").info("window icon applied");
+
+    try {
+      shell32.symbols.SetCurrentProcessExplicitAppUserModelID(wstr("DuckAI"));
+    } catch {}
+
+    log.child("window").info("window icon applied (DPI=" + dpi + ")");
   } catch (err) {
     log.child("window").warn("window icon failed", err instanceof Error ? err.message : err);
   }
@@ -293,6 +370,10 @@ function loadShell32() {
       args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32],
       returns: FFIType.u32,
     },
+    SetCurrentProcessExplicitAppUserModelID: {
+      args: [FFIType.ptr],
+      returns: FFIType.u32,
+    },
   });
 }
 
@@ -302,7 +383,39 @@ function loadUser32() {
       args: [FFIType.ptr, FFIType.u32, FFIType.u64, FFIType.u64],
       returns: FFIType.ptr,
     },
+    PrivateExtractIconsW: {
+      args: [
+        FFIType.ptr,
+        FFIType.i32,
+        FFIType.i32,
+        FFIType.i32,
+        FFIType.ptr,
+        FFIType.ptr,
+        FFIType.u32,
+        FFIType.u32,
+      ],
+      returns: FFIType.u32,
+    },
+    GetSystemMetrics: {
+      args: [FFIType.i32],
+      returns: FFIType.i32,
+    },
+    SetClassLongPtrW: {
+      args: [FFIType.ptr, FFIType.i32, FFIType.u64],
+      returns: FFIType.u64,
+    },
   });
+}
+
+function loadUser32Dpi() {
+  try {
+    return dlopen("user32.dll", {
+      GetDpiForWindow: { args: [FFIType.ptr], returns: FFIType.u32 },
+      GetSystemMetricsForDpi: { args: [FFIType.i32, FFIType.u32], returns: FFIType.i32 },
+    });
+  } catch {
+    return null;
+  }
 }
 
 function loadGobject() {

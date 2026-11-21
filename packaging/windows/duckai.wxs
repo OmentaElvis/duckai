@@ -46,6 +46,7 @@
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <File Id="DuckaiExe" Source="$(var.ExePath)" KeyPath="yes" />
+      <File Id="DuckaiIco" Source="$(var.AssetDir)\duckai.ico" />
     </ComponentGroup>
 
     <!-- VC++ 2015-2022 x64 runtime: libwebview.dll links it dynamically and it
@@ -65,7 +66,9 @@
           Description="Chat with Duck.ai in a native window"
           Target="[INSTALLFOLDER]duckai.exe"
           WorkingDirectory="INSTALLFOLDER"
-          Icon="AppIcon" />
+          Icon="AppIcon">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="DuckAI" />
+        </Shortcut>
         <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
         <RegistryValue
           Root="HKCU"

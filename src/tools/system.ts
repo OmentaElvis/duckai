@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Tool } from "../harness";
 
 interface NtfyConfig {
@@ -50,7 +50,17 @@ function defaultNtfyConfig(): NtfyConfig {
 async function sendDesktopNotification(title: string, message: string): Promise<{ sent: boolean; error?: string }> {
   try {
     // 1. Try notify-send (common on Linux)
-    const proc = Bun.spawn(["notify-send", title || "DuckAI", message], {
+    const iconCandidates = [
+      "duckai",
+      join(process.cwd(), "assets", "duckai.svg"),
+      join(dirname(process.execPath), "assets", "duckai.svg"),
+    ];
+    const linuxIcon = iconCandidates.find((p) => p === "duckai" || existsSync(p));
+    const args = ["notify-send"];
+    if (linuxIcon) args.push("-i", linuxIcon);
+    args.push(title || "DuckAI", message);
+
+    const proc = Bun.spawn(args, {
       stdout: "ignore",
       stderr: "ignore",
     });
@@ -93,18 +103,47 @@ async function sendDesktopNotification(title: string, message: string): Promise<
     if (process.platform === "win32") {
       const escapedMsg = message.replace(/'/g, "''");
       const escapedTitle = (title || "DuckAI").replace(/'/g, "''");
+
+      const iconCandidates = [
+        join(dirname(process.execPath), "duckai.ico"),
+        join(dirname(process.execPath), "assets", "duckai.ico"),
+        join(process.cwd(), "assets", "duckai.ico"),
+      ];
+      const iconPath = iconCandidates.find((p) => existsSync(p));
+      const escapedIconPath = iconPath ? iconPath.replace(/'/g, "''") : "";
+
       const script = [
         `$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime];`,
-        `$template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02;`,
-        `$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template);`,
-        `$xml.GetElementsByTagName('text')[0].InnerText = '${escapedTitle}';`,
-        `$xml.GetElementsByTagName('text')[1].InnerText = '${escapedMsg}';`,
+        escapedIconPath
+          ? [
+              `$template = [Windows.UI.Notifications.ToastTemplateType]::ToastImageAndText02;`,
+              `$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template);`,
+              `$xml.GetElementsByTagName('text')[0].InnerText = '${escapedTitle}';`,
+              `$xml.GetElementsByTagName('text')[1].InnerText = '${escapedMsg}';`,
+              `$xml.GetElementsByTagName('image')[0].SetAttribute('src', '${escapedIconPath}');`,
+            ].join(" ")
+          : [
+              `$template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02;`,
+              `$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template);`,
+              `$xml.GetElementsByTagName('text')[0].InnerText = '${escapedTitle}';`,
+              `$xml.GetElementsByTagName('text')[1].InnerText = '${escapedMsg}';`,
+            ].join(" "),
         `$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);`,
-        // An unregistered AUMID throws, so fall back to PowerShell's own
-        // registered app id — the toast still shows, just labelled PowerShell.
         `try { [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('DuckAI').Show($toast) }`,
-        `catch { [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('PowerShell').Show($toast) }`,
-      ].join(" ");
+        `catch {`,
+        `  try {`,
+        `    $reg = 'HKCU:\\Software\\Classes\\AppUserModelId\\DuckAI';`,
+        `    if (-not (Test-Path $reg)) {`,
+        `      New-Item -Path $reg -Force | Out-Null;`,
+        `      Set-ItemProperty -Path $reg -Name 'DisplayName' -Value 'Duck.ai' -Force;`,
+        escapedIconPath ? `      Set-ItemProperty -Path $reg -Name 'IconUri' -Value '${escapedIconPath}' -Force;` : ``,
+        `    }`,
+        `    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('DuckAI').Show($toast)`,
+        `  } catch {`,
+        `    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('PowerShell').Show($toast)`,
+        `  }`,
+        `}`,
+      ].filter(Boolean).join(" ");
       // Try pwsh first, then fall back to powershell (Windows PowerShell 5)
       for (const shell of ["pwsh", "powershell"]) {
         try {

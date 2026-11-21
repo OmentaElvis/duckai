@@ -77,6 +77,8 @@ const args = [
   `ExePath=${resolve(exe)}`,
   "-d",
   `RuntimeDir=${resolve(join(ROOT, "dist"))}`,
+  "-d",
+  `AssetDir=${resolve(join(ROOT, "assets"))}`,
   "-o",
   output,
 ];
