@@ -26,10 +26,12 @@ import {
 } from "./tool-history";
 import {
   callBody,
+  callCustomView,
   callSummary,
   type RenderBlock,
   type ToolCallView,
 } from "./tool-render";
+import { clearToolBody, paintToolBody } from "./ui/tool-body";
 import { SLOT_SENTINEL_RE_SOURCE } from "../protocol";
 
 const log = rootLog.child("ui");
@@ -190,73 +192,6 @@ export function summaryFor(call: ToolCallView): string {
   return typeof summary === "string" ? summary : formatArgsInline(call.args);
 }
 
-/**
- * Translate a single render descriptor into DOM. This is the *only* place that
- * knows about our shadow markup/classes, so tool views never have to.
- */
-function renderBlock(block: RenderBlock): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "block";
-  if (block.label) {
-    const label = document.createElement("div");
-    label.className = "label";
-    label.textContent = block.label;
-    wrap.append(label);
-  }
-  switch (block.kind) {
-    case "code": {
-      const pre = document.createElement("pre");
-      pre.textContent = block.text;
-      if (block.language) pre.dataset.language = block.language;
-      wrap.append(pre);
-      break;
-    }
-    case "text": {
-      const p = document.createElement("p");
-      p.className = "text";
-      p.textContent = block.text;
-      wrap.append(p);
-      break;
-    }
-    case "fields": {
-      const fields = document.createElement("div");
-      fields.className = "fields";
-      for (const f of block.fields) {
-        const k = document.createElement("div");
-        k.className = "k";
-        k.textContent = f.label;
-        const v = document.createElement("div");
-        v.className = "v";
-        v.textContent = f.value;
-        fields.append(k, v);
-      }
-      wrap.append(fields);
-      break;
-    }
-    case "list": {
-      const ul = document.createElement("ul");
-      ul.className = "list";
-      for (const item of block.items) {
-        const li = document.createElement("li");
-        li.textContent = item;
-        ul.append(li);
-      }
-      wrap.append(ul);
-      break;
-    }
-    case "link": {
-      const a = document.createElement("a");
-      a.href = block.href;
-      a.textContent = block.text;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      wrap.append(a);
-      break;
-    }
-  }
-  return wrap;
-}
-
 const STYLES = `
   :host { display: block; }
   .duckai-tools {
@@ -332,6 +267,8 @@ interface Card {
   summaryEl: HTMLElement;
   body: HTMLElement;
   args: unknown;
+  /** Latest call state, so the body can be repainted when a card moves. */
+  lastCall: ToolCallView;
 }
 
 /**
@@ -585,7 +522,18 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     body.className = "detail";
 
     cardEl.append(head, body);
-    const card: Card = { root: cardEl, key, live, dot, status, nameEl, summaryEl, body, args };
+    const card: Card = {
+      root: cardEl,
+      key,
+      live,
+      dot,
+      status,
+      nameEl,
+      summaryEl,
+      body,
+      args,
+      lastCall: { name, args, status: "running" },
+    };
     if (inlineHost) {
       moveCardToHost(card, inlineHost);
     } else {
@@ -599,6 +547,7 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
    * the expanded body — all derived from the generic render interface.
    */
   function renderCard(card: Card, call: ToolCallView): void {
+    card.lastCall = call;
     card.dot.className = `dot ${
       call.status === "running" ? "running" : call.status === "error" ? "error" : "ok"
     }`;
@@ -606,7 +555,7 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
       call.status === "running" ? "running" : call.status === "error" ? "error" : "done";
     card.root.classList.toggle("error", call.status === "error");
     card.summaryEl.textContent = summaryFor(call);
-    card.body.replaceChildren(...blocksFor(call).map(renderBlock));
+    paintToolBody(card.body, call, blocksFor(call), callCustomView(call));
     // Open rows only for *live, still-running* calls; finished and rehydrated
     // rows stay collapsed. Once the user toggles a row, we leave it alone.
     if (!userToggled.has(card.key)) card.root.open = call.status === "running" && card.live;
@@ -710,7 +659,12 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
       if (!card) continue;
       const iHost = resolveHost(callId);
       if (!iHost) continue;
-      if (!cardInHost(card, iHost)) moveCardToHost(card, iHost);
+      if (!cardInHost(card, iHost)) {
+        moveCardToHost(card, iHost);
+        // The card body moved to a different shadow root: repaint so custom
+        // styles are injected there and Preact reuses the same component tree.
+        renderCard(card, card.lastCall);
+      }
     }
   });
 
@@ -740,6 +694,7 @@ export function createToolUi(options: ToolUiOptions = {}): ToolUi {
     host = null;
     shadow = null;
     list = null;
+    for (const card of cards.values()) clearToolBody(card.body);
     cards.clear();
     userToggled.clear();
     slotHosts.clear();

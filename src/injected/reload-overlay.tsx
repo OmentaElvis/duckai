@@ -1,14 +1,12 @@
 /**
- * Full-window progress overlay shown while the webview is replacing the
- * current document with an updated cached one.
+ * Full-window progress overlay shown while the webview replaces the current
+ * document with an updated cached one.
  *
- * A plain page-level loader cannot survive navigation: the old document is torn
- * down while WebKit may keep showing its last frame, and the new document is
- * blank until it paints. The overlay is therefore paired with a short-lived
- * session marker — the page sets it before asking the host to reload, and the
- * next document re-shows the overlay immediately so the user sees continuous
- * progress instead of a frozen window.
+ * A plain page-level loader cannot survive navigation, so the overlay is paired
+ * with a short-lived session marker: the page sets it before asking the host to
+ * reload, and the next document re-shows the overlay immediately.
  */
+import { mountIsland, type Island } from "./ui/mount";
 
 const OVERLAY_ATTR = "data-duckai-ext-reload-overlay";
 const MARKER_KEY = "duckai-ext:reload-marker";
@@ -40,7 +38,6 @@ const STYLES = `
     inset: 0;
     z-index: 2147483647;
     box-sizing: border-box;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: #f2f2f7;
   }
   .overlay {
@@ -74,9 +71,7 @@ const STYLES = `
     font-size: 11px;
     opacity: 0.55;
   }
-  .detail:empty {
-    display: none;
-  }
+  .detail:empty { display: none; }
 `;
 
 /** Record that a reload is about to start. Safe to call outside the DOM. */
@@ -130,46 +125,54 @@ export function consumeReloadMarker(
   }
 }
 
+interface OverlayProps {
+  visible: boolean;
+  label: string;
+  detail: string;
+}
+
+function Overlay({ visible, label, detail }: OverlayProps) {
+  if (!visible) return null;
+  return (
+    <div class="overlay" role="status" aria-live="polite">
+      <div class="spinner" />
+      <div class="label">{label}</div>
+      <div class="detail">{detail}</div>
+    </div>
+  );
+}
+
 export function mountReloadOverlay(defaults: ReloadOverlayOptions = {}): ReloadOverlay {
-  const container = document.createElement("div");
-  container.setAttribute(OVERLAY_ATTR, "");
-  const shadow = container.attachShadow({ mode: "open" });
-
-  const style = document.createElement("style");
-  style.textContent = STYLES;
-
-  const overlay = document.createElement("div");
-  overlay.className = "overlay";
-  overlay.setAttribute("role", "status");
-  overlay.setAttribute("aria-live", "polite");
-
-  const spinner = document.createElement("div");
-  spinner.className = "spinner";
-
-  const label = document.createElement("div");
-  label.className = "label";
-
-  const detail = document.createElement("div");
-  detail.className = "detail";
-
-  overlay.append(spinner, label, detail);
-  shadow.append(style, overlay);
-
   let visible = false;
+  let label = defaults.label ?? "Reloading Duck.ai…";
+  let detail = defaults.detail ?? "";
+  let island: Island<OverlayProps>;
 
-  const attach = () => {
+  const paint = (): void => {
+    island.host.style.display = visible ? "block" : "none";
+    island.update({ visible, label, detail });
+  };
+
+  const attach = (): void => {
     if (!visible) return;
     // Prefer <body> once it exists; before that keep the overlay on <html> so
     // it is visible while the new document is still being parsed.
-    if (document.body && container.parentElement !== document.body) {
-      document.body.appendChild(container);
+    if (document.body && island.host.parentElement !== document.body) {
+      document.body.appendChild(island.host);
       return;
     }
-    if (container.isConnected) return;
+    if (island.host.isConnected) return;
     const parent = document.body ?? document.documentElement;
-    if (parent) parent.appendChild(container);
+    if (parent) parent.appendChild(island.host);
     else window.setTimeout(attach, 16);
   };
+
+  island = mountIsland<OverlayProps>({
+    marker: OVERLAY_ATTR,
+    component: Overlay,
+    props: { visible, label, detail },
+    styles: STYLES,
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", attach, { once: true });
@@ -180,14 +183,14 @@ export function mountReloadOverlay(defaults: ReloadOverlayOptions = {}): ReloadO
   return {
     show(opts: ReloadOverlayOptions = {}) {
       visible = true;
-      label.textContent = opts.label ?? defaults.label ?? "Reloading Duck.ai…";
-      detail.textContent = opts.detail ?? defaults.detail ?? "";
-      container.style.display = "block";
+      label = opts.label ?? defaults.label ?? "Reloading Duck.ai…";
+      detail = opts.detail ?? defaults.detail ?? "";
+      paint();
       attach();
     },
     hide() {
       visible = false;
-      container.style.display = "none";
+      paint();
     },
   };
 }

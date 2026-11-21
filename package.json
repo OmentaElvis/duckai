@@ -25,6 +25,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "preact": "^11.2.0",
     "webview-bun": "^2.4.0"
   },
   "devDependencies": {

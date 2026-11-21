@@ -204,4 +204,8 @@ bun test          # unit tests
 bun run typecheck # tsc --noEmit
 ```
 
+Injected panels and tool cards use Preact inside shadow-root islands. See
+[`src/injected/ui/README.md`](src/injected/ui/README.md) for the UI kit,
+mounting rules and custom tool views.
+
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/). On every push to `master`, CI typechecks, tests, builds the linux-x64 binary and packages the `.deb`; `semantic-release` then handles versioning, the changelog and GitHub releases.

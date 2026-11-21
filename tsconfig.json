@@ -10,6 +10,8 @@
     "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
     "skipLibCheck": true,
@@ -18,5 +20,5 @@
       "webview-bun": ["src/shims/webview-bun.d.ts"]
     }
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "tests/**/*.ts", "tests/**/*.tsx"]
 }

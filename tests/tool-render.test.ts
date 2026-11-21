@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   callBody,
+  callCustomView,
   callSummary,
   clearToolViews,
   getToolView,
@@ -87,5 +88,35 @@ describe("callBody", () => {
     expect(JSON.stringify(blocks)).toContain("r_abc");
     expect(JSON.stringify(blocks)).toContain("first bytes");
     expect(JSON.stringify(blocks)).not.toContain("original");
+  });
+});
+
+describe("callCustomView", () => {
+  const component = () => null;
+
+  test("undefined when no view or component is registered", () => {
+    expect(callCustomView({ name: "nope", args: {}, status: "ok" })).toBeUndefined();
+    registerToolView("t", { body: () => [] });
+    expect(callCustomView({ name: "t", args: {}, status: "ok" })).toBeUndefined();
+  });
+
+  test("returns the component without a styles key when no styles are set", () => {
+    registerToolView("t", { component });
+    const view = callCustomView({ name: "t", args: {}, status: "ok" });
+    expect(view?.component).toBe(component);
+    expect(view && "styles" in view).toBe(false);
+  });
+
+  test("returns the component together with its stylesheet", () => {
+    registerToolView("t", { component, styles: ".x { color: red; }" });
+    const view = callCustomView({ name: "t", args: {}, status: "ok" });
+    expect(view?.component).toBe(component);
+    expect(view?.styles).toBe(".x { color: red; }");
+  });
+
+  test("offloaded stubs keep the block presentation instead of the component", () => {
+    registerToolView("t", { component });
+    const stub = JSON.stringify({ ref: "r_abc", preview: "first bytes", bytes: 9999, lines: 100 });
+    expect(callCustomView({ name: "t", args: {}, status: "ok", result: stub })).toBeUndefined();
   });
 });

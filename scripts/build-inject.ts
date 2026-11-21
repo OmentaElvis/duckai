@@ -16,6 +16,11 @@ const result = await Bun.build({
   target: "browser",
   minify,
   naming: "inject.js",
+  // Preact reads NODE_ENV; the injected bundle runs in a browser where
+  // `process` does not exist. Bake it in so dev builds stay dependency-free.
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(minify ? "production" : "development"),
+  },
 });
 
 if (!result.success) {

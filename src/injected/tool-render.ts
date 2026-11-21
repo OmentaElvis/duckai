@@ -18,8 +18,18 @@
  *     ],
  *   });
  *
+ * For interactive or highly custom output, register a TSX component instead of
+ * (or alongside) `body`. It receives the live call and can use hooks:
+ *
+ *   registerToolView("mail_search", {
+ *     summary: (c) => …,
+ *     component: ({ call }) => <MailResults call={call} />,
+ *     styles: `.mail-row { … }`,   // optional, injected once per shadow root
+ *   });
+ *
  * Tools without a registered view fall back to a neutral JSON view.
  */
+import type { ComponentType } from "preact";
 
 export type ToolStatus = "running" | "ok" | "error";
 
@@ -45,6 +55,13 @@ export interface ToolView {
   summary?: (call: ToolCallView) => string;
   /** Blocks shown when the row is expanded. */
   body?: (call: ToolCallView) => RenderBlock[];
+  /**
+   * Optional custom expanded view. When present this replaces `body`, and is
+   * rendered as a Preact island inside the tool card's shadow root.
+   */
+  component?: ComponentType<{ call: ToolCallView }>;
+  /** CSS for `component`, injected once per shadow root. */
+  styles?: string;
 }
 
 const registry = new Map<string, ToolView>();
@@ -139,4 +156,23 @@ export function callBody(call: ToolCallView): RenderBlock[] | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** A registered TSX view plus its optional stylesheet. */
+export interface CustomToolView {
+  component: ComponentType<{ call: ToolCallView }>;
+  styles?: string;
+}
+
+/**
+ * Safe custom-view lookup. Offloaded large results keep the stub presentation
+ * (ref + preview) even when a tool registered a component, matching `callBody`.
+ */
+export function callCustomView(call: ToolCallView): CustomToolView | undefined {
+  if (parseResultStub(call.result)) return undefined;
+  const view = registry.get(call.name);
+  if (!view?.component) return undefined;
+  return view.styles
+    ? { component: view.component, styles: view.styles }
+    : { component: view.component };
 }
