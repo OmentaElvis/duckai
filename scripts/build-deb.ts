@@ -6,6 +6,7 @@
  *
  * Usage: bun scripts/build-deb.ts [--version <x.y.z>]
  */
+import { existsSync } from "node:fs";
 import { chmod, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
@@ -45,15 +46,29 @@ await rm(stage, { recursive: true, force: true });
 const binDir = join(stage, "usr/bin");
 const applicationsDir = join(stage, "usr/share/applications");
 const iconDir = join(stage, "usr/share/icons/hicolor/scalable/apps");
+const icon256Dir = join(stage, "usr/share/icons/hicolor/256x256/apps");
+const pixmapsDir = join(stage, "usr/share/pixmaps");
 await mkdir(binDir, { recursive: true });
 await mkdir(applicationsDir, { recursive: true });
 await mkdir(iconDir, { recursive: true });
+await mkdir(icon256Dir, { recursive: true });
+await mkdir(pixmapsDir, { recursive: true });
 await mkdir(join(stage, "DEBIAN"), { recursive: true });
 
 await cp(binary, join(binDir, PACKAGE));
 await chmod(join(binDir, PACKAGE), 0o755);
 await cp(join(ROOT, "assets/duckai.svg"), join(iconDir, `${PACKAGE}.svg`));
 await chmod(join(iconDir, `${PACKAGE}.svg`), 0o644);
+
+const pngPath = join(ROOT, "assets/duckai.png");
+if (existsSync(pngPath)) {
+  await cp(pngPath, join(icon256Dir, `${PACKAGE}.png`));
+  await chmod(join(icon256Dir, `${PACKAGE}.png`), 0o644);
+  await cp(pngPath, join(pixmapsDir, `${PACKAGE}.png`));
+  await chmod(join(pixmapsDir, `${PACKAGE}.png`), 0o644);
+}
+await cp(join(ROOT, "assets/duckai.svg"), join(pixmapsDir, `${PACKAGE}.svg`));
+await chmod(join(pixmapsDir, `${PACKAGE}.svg`), 0o644);
 
 const installedSize = Math.ceil(binaryStat.size / 1024);
 const maintainer = pkg.author ?? "OmentaElvis <omentaelvis@gmail.com>";

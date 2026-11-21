@@ -48,9 +48,32 @@ export interface NativeWindow {
 }
 
 /**
- * Assign the executable's icon to the Win32 window.
+ * Initialize Linux / GTK application identity early before any window is created.
  *
- * `webview` creates its window with no icon, so Windows draws its default
+ * GNOME Shell (Wayland & X11) matches running windows to their desktop entry via
+ * `app_id` (Wayland) and `WM_CLASS` (X11). GTK derives both from GLib's `prgname`.
+ * Setting this to "duckai" ensures GNOME Shell matches the window to `duckai.desktop`
+ * so Alt-Tab and the App Switcher display the application icon instead of a generic fallback.
+ */
+export function initLinuxApp(): void {
+  if (process.platform !== "linux") return;
+  try {
+    const glib = loadGlib();
+    glib.symbols.g_set_prgname(cstr("duckai"));
+    glib.symbols.g_set_application_name(cstr("Duck.ai"));
+  } catch {
+    // GLib missing or failed
+  }
+}
+
+/**
+ * Assign the executable's icon to the OS window.
+ *
+ * On Linux: sets the GTK window icon name to "duckai" and registers the assets
+ * folder as a search path so portable/dev runs find the icon even if the package
+ * is not installed under /usr/share/icons.
+ *
+ * On Windows: `webview` creates its window with no icon, so Windows draws its default
  * placeholder in the titlebar and falls back to the process icon in the
  * taskbar. `bun build --windows-icon` only brands the `.exe` file itself, so
  * the running window must be told explicitly.
@@ -59,9 +82,39 @@ export interface NativeWindow {
  * display scaling (via `PrivateExtractIconsW`) rather than legacy fixed 32/16
  * metrics from `ExtractIconExW`. Both window instance and class icons are set,
  * and the process AppUserModelID is registered so taskbar grouping matches.
- * Best-effort; never throws. No-op on non-Windows platforms.
+ * Best-effort; never throws.
  */
 export function applyWindowIcon(webview: NativeWindow): void {
+  if (process.platform === "linux") {
+    const win = webview.unsafeWindowHandle as unknown as number;
+    if (!win) return;
+    try {
+      const gtk = loadGtk();
+      gtk.symbols.gtk_window_set_default_icon_name(cstr("duckai"));
+      gtk.symbols.gtk_window_set_icon_name(win as never, cstr("duckai"));
+
+      const display = gtk.symbols.gdk_display_get_default() as unknown as number;
+      if (display) {
+        const theme = gtk.symbols.gtk_icon_theme_get_for_display(display as never) as unknown as number;
+        if (theme) {
+          const candidates = [
+            join(dirname(process.execPath), "assets"),
+            join(process.cwd(), "assets"),
+          ];
+          for (const cand of candidates) {
+            if (existsSync(cand)) {
+              gtk.symbols.gtk_icon_theme_add_search_path(theme as never, cstr(cand));
+            }
+          }
+        }
+      }
+      log.child("window").info("linux window icon applied (duckai)");
+    } catch (err) {
+      log.child("window").warn("linux window icon failed", err instanceof Error ? err.message : err);
+    }
+    return;
+  }
+
   if (process.platform !== "win32") return;
   const hwnd = webview.unsafeWindowHandle as unknown as number;
   if (!hwnd) return;
@@ -338,6 +391,10 @@ function loadGtk() {
     gtk_widget_get_width: { args: [FFIType.ptr], returns: FFIType.i32 },
     gtk_widget_get_height: { args: [FFIType.ptr], returns: FFIType.i32 },
     gtk_window_get_child: { args: [FFIType.ptr], returns: FFIType.ptr },
+    gtk_window_set_default_icon_name: { args: [FFIType.ptr], returns: FFIType.void },
+    gtk_window_set_icon_name: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+    gtk_icon_theme_get_for_display: { args: [FFIType.ptr], returns: FFIType.ptr },
+    gtk_icon_theme_add_search_path: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
   });
 }
 
@@ -361,6 +418,8 @@ function loadWebKit() {
 function loadGlib() {
   return dlopen("libglib-2.0.so.0", {
     g_timeout_add: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+    g_set_prgname: { args: [FFIType.ptr], returns: FFIType.void },
+    g_set_application_name: { args: [FFIType.ptr], returns: FFIType.void },
   });
 }
 

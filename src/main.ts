@@ -8,6 +8,7 @@
 import { fetchUpstream, readCachedHtml, writeCachedHtml } from "./cache";
 import { handleHarnessCall, setAvailableUpdate, setReloadHandler } from "./harness";
 import { log } from "./logging/host";
+import { initLinuxApp } from "./native";
 import {
   IPC_CMD_INDEX,
   IPC_CMD_RELOAD,
@@ -28,6 +29,7 @@ import {
 //  - WebKitGTK 2.40+ compositing defects / stale Wayland input regions.
 // Set before the worker initializes GTK; explicit user values are respected.
 if (process.platform === "linux") {
+  initLinuxApp();
   const defaults = {
     GSK_RENDERER: "gl",
     WEBKIT_DISABLE_COMPOSITING_MODE: "1",

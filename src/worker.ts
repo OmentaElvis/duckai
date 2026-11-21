@@ -12,7 +12,13 @@ import { dlopen, FFIType, JSCallback } from "bun:ffi";
 import { SizeHint, Webview } from "webview-bun";
 import { readCachedHtml } from "./cache";
 import { INJECT_SCRIPT } from "./generated/inject-script";
-import { applyWindowIcon, applyWindowTheme, loadHtmlWithBase, scheduleWindowNudge } from "./native";
+import {
+  applyWindowIcon,
+  applyWindowTheme,
+  initLinuxApp,
+  loadHtmlWithBase,
+  scheduleWindowNudge,
+} from "./native";
 import { log } from "./logging/host";
 import {
   IPC_CMD_INDEX,
@@ -34,6 +40,10 @@ const { control, data } = viewsOf(buffer);
 
 const postMessage = (message: WorkerMessage): void =>
   (self as unknown as { postMessage(message: WorkerMessage): void }).postMessage(message);
+
+// Set Linux program/application identity before the GTK window is created
+// so Wayland (app_id) and X11 (WM_CLASS) match duckai.desktop in Alt-Tab.
+initLinuxApp();
 
 // Devtools are opt-in: webview-bun also enables WebKit's
 // `enable-write-console-messages-to-stdout` in debug mode, which mirrors every
