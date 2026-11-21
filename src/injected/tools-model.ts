@@ -98,3 +98,8 @@ export function formFromServer(server: McpServerUi): McpFormState {
 export function mcpStatus(servers: McpServerUi[]): string {
   return `${servers.filter((server) => server.enabled).length}/${servers.length} enabled`;
 }
+
+/** Compact "enabled / total" summary used by the Tools section header. */
+export function toolStatus(tools: { enabled: boolean }[]): string {
+  return `${tools.filter((tool) => tool.enabled).length}/${tools.length} enabled`;
+}

@@ -81,25 +81,28 @@ Everything is client-side: it is a textual contract between the model and a loca
 - **Memory**: long-term notes that survive across sessions.
 - **Notifications**: desktop notifications and ntfy.sh push.
 - **Permissions**: per-tool `allow` / `ask` / `deny` policies, an in-chat approval prompt with a session-scoped "always allow", and the ability to enable or disable any tool.
+- **Plugin settings**: one dialog with a sidebar for health checks, tool permissions and MCP servers, so new plugin-specific settings have a clear home.
 
 <table>
   <tr>
-    <td align="center" width="50%">
-      <img src="assets/duckai-toolist-modal.png" alt="Tool manager listing filesystem tools with per-tool permission levels" width="100%">
+    <td align="center">
+      <img src="assets/duckai-toolist-modal.png" alt="Plugin settings dialog showing the Tools section with per-tool permission levels" width="100%">
       <br>
       <sub>Enable, disable and set a permission level for every tool.</sub>
     </td>
-    <td align="center" width="50%">
-      <img src="assets/duckai-toolist-modal-mcp.png" alt="MCP server configuration listing Chrome and Time servers" width="100%">
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/duckai-toolist-modal-mcp.png" alt="Plugin settings dialog showing the MCP servers section" width="100%">
       <br>
-      <sub>MCP servers are added and toggled in the same panel.</sub>
+      <sub>MCP servers have their own section in the same dialog.</sub>
     </td>
   </tr>
 </table>
 
 ### MCP servers
 
-MCP servers are configured in `~/.duckai/mcp.json` (or `$DUCKAI_MCP_CONFIG_PATH`) and can also be added from **Manage tools → MCP servers**. Local stdio servers and remote HTTP servers are both supported:
+MCP servers are configured in `~/.duckai/mcp.json` (or `$DUCKAI_MCP_CONFIG_PATH`) and can also be added from **Plugin settings → MCP servers**. Local stdio servers and remote HTTP servers are both supported:
 
 ```jsonc
 {
@@ -188,9 +191,9 @@ Tool calls stay compact in the transcript, one line with the command and its sta
 - **No custom roles.** duck.ai does not expose system or tool roles, so extra instructions and tool results travel as user messages. That is also why some models will not emit tool calls reliably.
 
 <p align="center">
-  <img src="assets/duckai-health-check.png" alt="Plugin health panel listing passing checks for the harness components" width="360">
+  <img src="assets/duckai-health-check.png" alt="Plugin settings dialog showing the health check section with passing checks">
   <br>
-  <sub>The health panel probes the IPC bridge, fetch hook, tool manifest, envelope grammar, duck.ai selectors, storage and stream roles.</sub>
+  <sub>The health section probes the IPC bridge, fetch hook, tool manifest, envelope grammar, duck.ai selectors, storage and stream roles.</sub>
 </p>
 
 ### What it does not do

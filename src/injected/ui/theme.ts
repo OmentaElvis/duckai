@@ -54,5 +54,13 @@ export function themeVars(dark: boolean): CSSProperties {
     "--h-border": dark ? "rgba(255,255,255,.16)" : "rgba(0,0,0,.14)",
     "--h-hover": dark ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.06)",
     "--h-accent": "#3969ef",
+    "--h-ok": dark ? "#4ade80" : "#15803d",
+    "--h-warn": dark ? "#fbbf24" : "#b45309",
+    "--h-fail": dark ? "#f87171" : "#b91c1c",
+    "--h-skip": dark ? "#9ca3af" : "#6b7280",
+    "--h-ok-bg": dark ? "rgba(74,222,128,.16)" : "rgba(21,128,61,.12)",
+    "--h-warn-bg": dark ? "rgba(251,191,36,.16)" : "rgba(180,83,9,.12)",
+    "--h-fail-bg": dark ? "rgba(248,113,113,.16)" : "rgba(185,28,28,.12)",
+    "--h-skip-bg": dark ? "rgba(156,163,175,.16)" : "rgba(107,114,128,.12)",
   } as CSSProperties;
 }

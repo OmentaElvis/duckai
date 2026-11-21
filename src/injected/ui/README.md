@@ -8,7 +8,7 @@ This directory is the shared layer:
 | File | Purpose |
 | --- | --- |
 | `mount.ts` | `mountIsland`, `attachToBody`, `Island<P>` |
-| `components.tsx` | `Button`, `TextInput`, `TextArea`, `Select`, `Field`, `Checkbox`, `Row`, `Footer`, `SectionHead`, `Modal` |
+| `components.tsx` | `Button`, `TextInput`, `TextArea`, `Select`, `Field`, `Checkbox`, `Switch`, `Row`, `Footer`, `SectionHead`, `Modal`, `CloseButton` |
 | `theme.ts` | `usePageTheme()`, `themeVars(dark)` |
 | `styles.ts` | `BASE_STYLES` and the `ui-*` class primitives |
 | `tool-body.tsx` | `paintToolBody` / `clearToolBody` used by tool cards |
@@ -131,6 +131,14 @@ registerToolView("mail_search", {
   re-rendered with fresh `call` data on every status change.
 - Keep pure parsing/formatting in a separate module (like `tools-model.ts`) so it
   is easy to unit test without a DOM.
+
+## Multi-section panels
+
+`src/injected/plugin-settings/` is the reference for a settings-style dialog:
+one island, a sidebar, and a pane per section. To add a section, extend the
+`SectionDef` list in `plugin-settings/index.tsx` and keep its data loading and
+mutable state inside the section component. New plugin settings belong there
+rather than in another top-level menu entry.
 
 ## Testing
 

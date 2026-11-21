@@ -16,8 +16,8 @@ import { callHarness, callHarnessSafe } from "./bridge";
 import { installFetchHook } from "./fetch-hook";
 import { noteEvent, noteFeVersion, runHealthChecks, type HealthOptions } from "./health";
 import { mountApprovalUi, type ApprovalAnswer } from "./approval-ui";
-import { mountHealthUi, type HealthUi } from "./health-ui";
-import { mountToolsUi, type McpServerUi, type McpUpsert, type ToolsUi } from "./tools-ui";
+import { mountPluginSettings, type PluginSettingsUi } from "./plugin-settings";
+import type { McpServerUi, McpUpsert } from "./tools-model";
 import { mountUpdateBanner } from "./update-banner";
 import {
   clearReloadMarker,
@@ -196,28 +196,29 @@ if (window.top === window && !window.__duckai_ext) {
   // live VQD probe) and again the first time a conversation is open, so the DOM
   // anchors are actually present. The host renders the coloured report.
   let domChecked = false;
-  let healthUi: HealthUi | null = null;
-  let toolsUi: ToolsUi | null = null;
+  let pluginSettings: PluginSettingsUi | null = null;
 
   const HEALTH_DOT: Record<HealthStatus, string> = {
-    ok: "#63c853",
-    warn: "#f0b429",
-    fail: "#de5833",
-    skip: "#9aa0a6",
+    ok: "var(--ds-status-green, #22c55e)",
+    warn: "var(--ds-status-yellow, #f59e0b)",
+    fail: "var(--ds-status-red, #ef4444)",
+    skip: "var(--ds-color-gray-50, #9ca3af)",
   };
+  let healthDotStatus: HealthStatus = "skip";
   const paintHealthDot = (status: HealthStatus): void => {
+    healthDotStatus = status;
     const dot = document.querySelector<HTMLElement>(
-      "[data-duckai-ext-menu-health] [data-health-dot]",
+      "[data-duckai-ext-menu-settings] [data-health-dot]",
     );
     if (dot) dot.style.background = HEALTH_DOT[status];
   };
 
   const runAndReportHealth = async (deep: boolean): Promise<void> => {
-    healthUi?.setRunning();
+    pluginSettings?.setHealthRunning();
     try {
       const report = await runHealthChecks({ deep, getTools: () => ext.tools });
       ext.health.last = report;
-      healthUi?.update(report);
+      pluginSettings?.updateHealth(report);
       paintHealthDot(report.status);
       const fails = report.checks.filter((c) => c.status === "fail").length;
       const warns = report.checks.filter((c) => c.status === "warn").length;
@@ -228,41 +229,39 @@ if (window.top === window && !window.__duckai_ext) {
     }
   };
 
-  healthUi = mountHealthUi({ onRun: () => void runAndReportHealth(true) });
-  toolsUi = mountToolsUi({
-    load: () => callHarness("tools") as Promise<ManagedTool[]>,
-    setEnabled: (name, enabled) =>
-      callHarness("setToolEnabled", { name, enabled }) as Promise<ManagedTool[]>,
-    setPermission: (name, level) =>
-      callHarness("setPermission", { name, level }) as Promise<ManagedTool[]>,
-    loadMcp: () => callHarness("mcpServers") as Promise<McpServerUi[]>,
-    upsertMcp: (server: McpUpsert) =>
-      callHarness("mcpUpsert", server) as Promise<McpServerUi[]>,
-    deleteMcp: (name) =>
-      callHarness("mcpDelete", { name }) as Promise<McpServerUi[]>,
-    setMcpEnabled: (name, enabled) =>
-      callHarness("mcpSetEnabled", { name, enabled }) as Promise<McpServerUi[]>,
-    onChange: (tools) => {
-      ext.tools = tools.filter((t) => t.enabled);
+  pluginSettings = mountPluginSettings({
+    onRunHealth: () => void runAndReportHealth(true),
+    tools: {
+      load: () => callHarness("tools") as Promise<ManagedTool[]>,
+      setEnabled: (name, enabled) =>
+        callHarness("setToolEnabled", { name, enabled }) as Promise<ManagedTool[]>,
+      setPermission: (name, level) =>
+        callHarness("setPermission", { name, level }) as Promise<ManagedTool[]>,
+      onChange: (tools) => {
+        ext.tools = tools.filter((t) => t.enabled);
+      },
+    },
+    mcp: {
+      load: () => callHarness("mcpServers") as Promise<McpServerUi[]>,
+      upsert: (server: McpUpsert) =>
+        callHarness("mcpUpsert", server) as Promise<McpServerUi[]>,
+      remove: (name) => callHarness("mcpDelete", { name }) as Promise<McpServerUi[]>,
+      setEnabled: (name, enabled) =>
+        callHarness("mcpSetEnabled", { name, enabled }) as Promise<McpServerUi[]>,
     },
   });
 
   mountSettingsEntry({
-    id: "health",
-    label: "Plugin health",
-    onOpen: () => healthUi?.open(),
+    id: "settings",
+    label: "Plugin settings",
+    onOpen: () => pluginSettings?.open(),
     renderIcon: (label) => {
       const dot = document.createElement("span");
       dot.setAttribute("data-health-dot", "");
       dot.style.cssText =
-        "width:8px;height:8px;border-radius:50%;flex:none;background:#9aa0a6";
+        `width:8px;height:8px;border-radius:50%;flex:none;background:${HEALTH_DOT[healthDotStatus]}`;
       label.append(dot);
     },
-  });
-  mountSettingsEntry({
-    id: "tools",
-    label: "Manage tools",
-    onOpen: () => toolsUi?.open(),
   });
 
   applyCustomizations();

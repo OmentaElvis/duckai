@@ -6,6 +6,7 @@ import {
   parseArgs,
   parseEnv,
   parseHeaders,
+  toolStatus,
   type McpServerUi,
 } from "../src/injected/tools-model";
 
@@ -91,5 +92,14 @@ describe("mcpStatus", () => {
       ]),
     ).toBe("2/3 enabled");
     expect(mcpStatus([])).toBe("0/0 enabled");
+  });
+});
+
+describe("toolStatus", () => {
+  test("reports enabled / total", () => {
+    expect(toolStatus([{ enabled: true }, { enabled: false }, { enabled: true }])).toBe(
+      "2/3 enabled",
+    );
+    expect(toolStatus([])).toBe("0/0 enabled");
   });
 });
