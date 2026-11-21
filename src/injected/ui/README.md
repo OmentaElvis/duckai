@@ -10,7 +10,7 @@ This directory is the shared layer:
 | `mount.ts` | `mountIsland`, `attachToBody`, `Island<P>` |
 | `components.tsx` | `Button`, `TextInput`, `TextArea`, `Select`, `Field`, `Checkbox`, `Switch`, `Row`, `Footer`, `SectionHead`, `Modal`, `CloseButton` |
 | `theme.ts` | `usePageTheme()`, `themeVars(dark)` |
-| `styles.ts` | `BASE_STYLES` and the `ui-*` class primitives |
+| `base.css` | Shared `ui-*` class primitives and base tokens |
 | `tool-body.tsx` | `paintToolBody` / `clearToolBody` used by tool cards |
 
 ## When to use Preact
@@ -67,9 +67,9 @@ Rules of thumb:
   host.
 - Panels that must exist immediately can stay attached and render `null` while
   closed (see `Modal`). That keeps opening/closing cheap.
-- Put panel-specific CSS in `styles`; the kit prefixes `BASE_STYLES` for you.
-  Keep shared primitives in `styles.ts` and one-off classes in the panel file so
-  they are easy to find.
+- Put panel-specific CSS in `styles`; the kit prefixes `base.css` for you.
+  Keep shared primitives in `base.css` and panel styles in colocated `.css` files
+  so they are easy to find.
 
 ## Theme
 

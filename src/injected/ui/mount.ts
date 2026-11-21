@@ -1,5 +1,5 @@
 import { h, render, type ComponentType } from "preact";
-import { BASE_STYLES } from "./styles";
+import BASE_STYLES from "./base.css";
 
 export interface Island<P extends object> {
   /** Append this one node wherever the panel belongs. */

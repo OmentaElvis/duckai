@@ -7,6 +7,7 @@
  * reload, and the next document re-shows the overlay immediately.
  */
 import { mountIsland, type Island } from "./ui/mount";
+import STYLES from "./reload-overlay.css";
 
 const OVERLAY_ATTR = "data-duckai-ext-reload-overlay";
 const MARKER_KEY = "duckai-ext:reload-marker";
@@ -31,48 +32,6 @@ export interface ReloadOverlay {
   hide(): void;
 }
 
-const STYLES = `
-  :host {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 2147483647;
-    box-sizing: border-box;
-    color: #f2f2f7;
-  }
-  .overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    background: #161616;
-  }
-  .spinner {
-    width: 26px;
-    height: 26px;
-    box-sizing: border-box;
-    border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.16);
-    border-top-color: #0a84ff;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-  .label {
-    font-size: 14px;
-    font-weight: 500;
-  }
-  .detail {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    opacity: 0.55;
-  }
-  .detail:empty { display: none; }
-`;
 
 /** Record that a reload is about to start. Safe to call outside the DOM. */
 export function markReloading(

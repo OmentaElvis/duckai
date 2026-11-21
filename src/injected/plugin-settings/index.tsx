@@ -12,7 +12,7 @@ import { CloseButton, Modal } from "../ui/components";
 import { HealthDot, HealthSection } from "./health-section";
 import { ToolsSection } from "./tools-section";
 import { McpSection } from "./mcp-section";
-import { SETTINGS_STYLES } from "./styles";
+import SETTINGS_STYLES from "./plugin-settings.css";
 import type { PluginSettingsOptions, SettingsSectionId } from "./types";
 
 export type {
