@@ -234,6 +234,61 @@ export function applyWindowIcon(webview: NativeWindow): void {
 }
 
 /**
+ * Open a URL in the user's default web browser. Best-effort; never throws.
+ */
+export function openExternalUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:" && parsed.protocol !== "mailto:") {
+      log.child("native").warn("openExternalUrl: rejected protocol", parsed.protocol);
+      return false;
+    }
+    const cleanUrl = parsed.toString();
+
+    if (process.platform === "win32") {
+      try {
+        const shell32 = loadShell32();
+        const res = shell32.symbols.ShellExecuteW(
+          null as never,
+          wstr("open"),
+          wstr(cleanUrl),
+          null as never,
+          null as never,
+          1,
+        ) as unknown as number;
+        if (Number(res) > 32) {
+          log.child("native").info("opened external url (ShellExecuteW):", cleanUrl);
+          return true;
+        }
+      } catch (err) {
+        log.child("native").debug("ShellExecuteW failed, falling back to cmd", String(err));
+      }
+      Bun.spawn(["cmd.exe", "/c", "start", "", cleanUrl], {
+        windowsHide: true,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      log.child("native").info("opened external url (cmd):", cleanUrl);
+      return true;
+    }
+
+    if (process.platform === "darwin") {
+      Bun.spawn(["open", cleanUrl], { stdout: "ignore", stderr: "ignore" });
+      log.child("native").info("opened external url (macOS):", cleanUrl);
+      return true;
+    }
+
+    // Linux / default
+    Bun.spawn(["xdg-open", cleanUrl], { stdout: "ignore", stderr: "ignore" });
+    log.child("native").info("opened external url (Linux):", cleanUrl);
+    return true;
+  } catch (err) {
+    log.child("native").warn("openExternalUrl failed", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/**
  * Style the native window to match the app: dark widgets, square corners, and a
  * titlebar tinted to blend with the page. Best-effort — never throws.
  */
@@ -432,6 +487,10 @@ function loadShell32() {
     SetCurrentProcessExplicitAppUserModelID: {
       args: [FFIType.ptr],
       returns: FFIType.u32,
+    },
+    ShellExecuteW: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.i32],
+      returns: FFIType.ptr,
     },
   });
 }

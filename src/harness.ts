@@ -34,6 +34,7 @@ import { maybeOffload } from "./tools/results";
 import { coreTools } from "./tools";
 import { makeToolHelpTool } from "./tools/meta";
 import { VERSION } from "./version";
+import { openExternalUrl } from "./native";
 
 export type { ToolManifestEntry, PermissionScope };
 
@@ -330,6 +331,21 @@ export async function handleHarnessCall(req: unknown): Promise<unknown> {
     switch (method) {
       case "ping":
         return { ok: true, result: { pong: Date.now() } };
+      case "openUrl": {
+        const p = (params ?? {}) as { url?: string };
+        const urlStr = typeof p.url === "string" ? p.url.trim() : "";
+        if (!urlStr) return { ok: false, error: "missing url" };
+        try {
+          const parsed = new URL(urlStr);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:" && parsed.protocol !== "mailto:") {
+            return { ok: false, error: `invalid url protocol: ${parsed.protocol}` };
+          }
+        } catch {
+          return { ok: false, error: "malformed url" };
+        }
+        openExternalUrl(urlStr);
+        return { ok: true };
+      }
       case "pageReady": {
         const p = (params ?? {}) as { versionTag?: string };
         log.child("bridge").info("page ready", params);

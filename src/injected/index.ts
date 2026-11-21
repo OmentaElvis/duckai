@@ -36,6 +36,7 @@ import { pruneHistory } from "./tool-history";
 import { savedConversationIds } from "./chat-store";
 import { applyCustomizations } from "./customizations";
 import { isHarnessEnabled, mountComposerToggle, toggleHarness } from "./composer-toggle";
+import { installExternalLinkInterceptor } from "./external-links";
 
 type ExtGlobal = {
   version: string;
@@ -266,6 +267,7 @@ if (window.top === window && !window.__duckai_ext) {
 
   applyCustomizations();
   mountComposerToggle();
+  installExternalLinkInterceptor();
 
   // Restore widget rows for historical tool calls after a reload / when a
   // saved conversation is (re)opened. Debounced: the observer fires a lot.

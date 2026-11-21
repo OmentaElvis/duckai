@@ -30,6 +30,28 @@ describe("harness bridge", () => {
     expect((res.result as { pong: number }).pong).toBeGreaterThan(0);
   });
 
+  test("openUrl validates input and succeeds on http(s)", async () => {
+    const missing = (await handleHarnessCall({ method: "openUrl", params: {} })) as {
+      ok: boolean;
+      error: string;
+    };
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain("missing url");
+
+    const badProto = (await handleHarnessCall({
+      method: "openUrl",
+      params: { url: "javascript:alert(1)" },
+    })) as { ok: boolean; error: string };
+    expect(badProto.ok).toBe(false);
+    expect(badProto.error).toContain("invalid url protocol");
+
+    const valid = (await handleHarnessCall({
+      method: "openUrl",
+      params: { url: "https://duckduckgo.com/privacy" },
+    })) as { ok: boolean };
+    expect(valid.ok).toBe(true);
+  });
+
   test("manifest lists echo tool and host info", async () => {
     const res = (await handleHarnessCall({ method: "manifest" })) as {
       ok: boolean;
