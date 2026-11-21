@@ -1,3 +1,18 @@
+# [1.4.0](https://github.com/OmentaElvis/duckai/compare/v1.3.0...v1.4.0) (2026-11-21)
+
+
+### Bug Fixes
+
+* **linux:** resolve missing window icon in GNOME Alt-Tab switcher ([9b81dce](https://github.com/OmentaElvis/duckai/commit/9b81dce247d744b48d8f8385fc24effbcaf7f34a))
+* **navigation:** open external and target="_blank" links in default browser ([39c3594](https://github.com/OmentaElvis/duckai/commit/39c3594a0f2a4df1ab2ab437b44e03aaa70e983f))
+* remove color inherit that broke light mode syntax highlighting ([3950e87](https://github.com/OmentaElvis/duckai/commit/3950e8712102b76ebeacac7b36b1f255070a050d))
+* **windows:** resolve low-res window and notification icons ([585e1e3](https://github.com/OmentaElvis/duckai/commit/585e1e34e6e7f9d00d8ba50c0bd31ae2fd633631))
+
+
+### Features
+
+* move plugin configs to a unified settings modal ([c47b294](https://github.com/OmentaElvis/duckai/commit/c47b294c58c7b2ec8fb1293e952b2be6e95b3649))
+
 # [1.3.0](https://github.com/OmentaElvis/duckai/compare/v1.2.0...v1.3.0) (2026-11-18)
 
 
